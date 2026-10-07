@@ -2,6 +2,7 @@ export type Vec3 = [number, number, number];
 export type LatLon = [number, number];
 
 export type WorldMode = "earth" | "procedural" | "sandbox";
+export type ViewMode = "globe3d" | "map2d";
 export type EditorTool = "select" | "move" | "rotate" | "scale" | "territory";
 export type ObjectKind = "block" | "sphere" | "cylinder" | "spawn" | "king";
 export type Relation = "neutral" | "allied" | "war";
@@ -20,6 +21,26 @@ export type FlagPresetId =
   | "emerald-sun"
   | "sky-chevron"
   | "imperial-band";
+
+export type NationEffectKind =
+  | "military-aid"
+  | "economic-aid"
+  | "morale-boost"
+  | "sanctions"
+  | "combat-fatigue"
+  | "unrest";
+
+export interface NationEffect {
+  id: string;
+  kind: NationEffectKind;
+  label: string;
+  attackMultiplier: number;
+  defenseMultiplier: number;
+  incomeMultiplier: number;
+  moraleModifier: number;
+  remainingTicks: number;
+  positive: boolean;
+}
 
 export interface SceneObject {
   id: string;
@@ -52,6 +73,7 @@ export interface Faction {
   flagPresetId: FlagPresetId;
   allianceName?: string | null;
   relations: Record<string, Relation>;
+  effects: NationEffect[];
 }
 
 export interface TerritoryPatch {
@@ -124,6 +146,8 @@ export interface SavedWorld {
   version: 2;
   worldName: string;
   worldMode: WorldMode;
+  viewMode?: ViewMode;
+  supportedFactionId?: string | null;
   seed: number;
   objects: SceneObject[];
   factions: Faction[];
@@ -140,7 +164,7 @@ export interface LegacySavedWorldV1 {
   worldMode: "earth" | "procedural";
   seed: number;
   objects: SceneObject[];
-  factions: Array<Omit<Faction, "accentColor">>;
+  factions: Array<Omit<Faction, "accentColor" | "effects">>;
   logs: string[];
   tick: number;
 }
