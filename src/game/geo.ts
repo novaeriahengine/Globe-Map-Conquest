@@ -27,6 +27,8 @@ export function seededColor(key: string): string {
   for (let i = 0; i < key.length; i += 1) {
     hash = (hash * 31 + key.charCodeAt(i)) >>> 0;
   }
-  const hue = hash % 360;
-  return `hsl(${hue} 66% 55%)`;
+  const hue = (hash % 360) / 360;
+  const color = new THREE.Color();
+  color.setHSL(hue, 0.66, 0.55);
+  return `#${color.getHexString()}`;
 }
