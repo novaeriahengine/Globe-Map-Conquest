@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { CountryPanel } from "./components/CountryPanel";
 import { Inspector } from "./components/Inspector";
+import { OnlinePanel } from "./components/OnlinePanel";
 import { Toolbar } from "./components/Toolbar";
 import { WorldCanvas } from "./components/WorldCanvas";
 import { useGameStore } from "./store/useGameStore";
@@ -37,6 +38,7 @@ export default function App() {
 
       <div className="workspace">
         <aside className="left-sidebar">
+          <OnlinePanel />
           <CountryPanel />
         </aside>
 
