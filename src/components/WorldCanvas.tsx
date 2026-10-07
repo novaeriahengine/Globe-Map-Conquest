@@ -1,5 +1,5 @@
 import { Canvas, type ThreeEvent } from "@react-three/fiber";
-import { Html, OrbitControls, Stars, TransformControls } from "@react-three/drei";
+import { Html, OrbitControls, Stars } from "@react-three/drei";
 import { feature } from "topojson-client";
 import worldAtlas from "world-atlas/countries-110m.json";
 import * as THREE from "three";
@@ -745,59 +745,23 @@ function ObjectVisual({ object }: { object: SceneObject }) {
   );
 }
 
-function EditableObject({ object }: { object: SceneObject }) {
-  const groupRef = useRef<THREE.Group>(null);
-  const selectedObjectId = useGameStore((state) => state.selectedObjectId);
-  const selectObject = useGameStore((state) => state.selectObject);
-  const tool = useGameStore((state) => state.tool);
-  const updateObjectTransform = useGameStore((state) => state.updateObjectTransform);
-  const selected = selectedObjectId === object.id;
-
-  const group = (
-    <group
-      ref={groupRef}
-      position={object.position}
-      rotation={object.rotation}
-      scale={object.scale}
-      onPointerDown={(event) => {
-        event.stopPropagation();
-        selectObject(object.id);
-      }}
-    >
-      <ObjectVisual object={object} />
-    </group>
-  );
-
-  if (!selected || tool === "select" || tool === "territory") return group;
-
-  const mode = tool === "move" ? "translate" : tool;
-
-  return (
-    <TransformControls
-      mode={mode}
-      onObjectChange={() => {
-        const current = groupRef.current;
-        if (!current) return;
-        updateObjectTransform(object.id, {
-          position: [current.position.x, current.position.y, current.position.z],
-          rotation: [current.rotation.x, current.rotation.y, current.rotation.z],
-          scale: [current.scale.x, current.scale.y, current.scale.z]
-        });
-      }}
-    >
-      {group}
-    </TransformControls>
-  );
-}
-
 function SceneObjects() {
   const objects = useGameStore((state) => state.objects);
 
   return (
     <group>
-      {objects.map((object) => (
-        <EditableObject key={object.id} object={object} />
-      ))}
+      {objects
+        .filter((object) => object.kind === "king")
+        .map((object) => (
+          <group
+            key={object.id}
+            position={object.position}
+            rotation={object.rotation}
+            scale={object.scale}
+          >
+            <ObjectVisual object={object} />
+          </group>
+        ))}
     </group>
   );
 }
@@ -853,11 +817,8 @@ function WorldScene() {
 }
 
 export function WorldCanvas() {
-  const selectObject = useGameStore((state) => state.selectObject);
-
   return (
     <Canvas
-      onPointerMissed={() => selectObject(null)}
       shadows
       dpr={[1, 1.6]}
       camera={{
