@@ -4,7 +4,9 @@ import { createInitialFactions } from "../game/countries";
 import { latLonToXYZ, seededColor } from "../game/geo";
 import type {
   CivilizationRecord,
+  ConflictScenario,
   EditorTool,
+  Era,
   Faction,
   FlagPresetId,
   LatLon,
@@ -12,6 +14,7 @@ import type {
   NameCatalog,
   NationEffect,
   NationEffectKind,
+  NationFocus,
   NpcUnit,
   ObjectKind,
   Quest,
@@ -22,6 +25,7 @@ import type {
   TraitStats,
   Vec3,
   ViewMode,
+  WorkspaceMode,
   WorldMode
 } from "../game/types";
 
@@ -30,6 +34,10 @@ interface GameStore {
   worldMode: WorldMode;
   viewMode: ViewMode;
   supportedFactionId: string | null;
+  workspaceMode: WorkspaceMode;
+  era: Era;
+  conflictScenario: ConflictScenario;
+  populationSeed: number;
   seed: number;
   playMode: boolean;
   tool: EditorTool;
@@ -51,9 +59,18 @@ interface GameStore {
   setWorldName: (name: string) => void;
   setWorldMode: (mode: WorldMode) => void;
   setViewMode: (mode: ViewMode) => void;
+  setWorkspaceMode: (mode: WorkspaceMode) => void;
+  setEra: (era: Era) => void;
+  setConflictScenario: (scenario: ConflictScenario) => void;
   supportFaction: (factionId: string | null) => void;
   applyNationEffect: (factionId: string, kind: NationEffectKind) => void;
   clearNationEffects: (factionId: string) => void;
+  setNationFocus: (factionId: string, focus: NationFocus) => void;
+  setIntegrationPolicy: (
+    factionId: string,
+    policy: "local" | "balanced" | "settler"
+  ) => void;
+  seedPopulation: (factionId: string, count: number) => void;
   adjustNation: (
     factionId: string,
     field: "army" | "treasury" | "stability",
@@ -90,6 +107,7 @@ interface GameStore {
   deleteTerritory: (id: string) => void;
   promoteTerritoryToFaction: (id: string, name?: string) => void;
   startWorldWar: () => void;
+  startConflictScenario: (scenario: ConflictScenario) => void;
   simulateTick: () => void;
   exportWorld: () => SavedWorld;
   importWorld: (snapshot: SavedWorld | LegacySavedWorldV1, source?: string) => void;
