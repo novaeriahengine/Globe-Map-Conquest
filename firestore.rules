@@ -1,0 +1,20 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Prototype rules: this project currently has no user-login requirement.
+    // Before a public production launch, replace these with authenticated roles
+    // and App Check enforcement so strangers cannot overwrite worlds.
+    match /worlds/{worldId} {
+      allow read, write: if true;
+
+      match /{document=**} {
+        allow read, write: if true;
+      }
+    }
+
+    match /catalogs/{catalogId} {
+      allow read, write: if true;
+    }
+  }
+}
