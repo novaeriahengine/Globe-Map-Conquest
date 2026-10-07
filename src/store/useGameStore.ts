@@ -37,6 +37,7 @@ interface GameStore {
   catalog: NameCatalog;
   selectedObjectId: string | null;
   selectedFactionId: string | null;
+  selectedSubdivisionId: string | null;
   logs: string[];
   tick: number;
 
@@ -50,6 +51,7 @@ interface GameStore {
   setCatalog: (catalog: NameCatalog) => void;
   selectObject: (id: string | null) => void;
   selectFaction: (id: string | null) => void;
+  selectSubdivision: (id: string | null) => void;
   selectTerritory: (id: string | null) => void;
   addObject: (kind: ObjectKind, position?: Vec3, factionId?: string) => void;
   deleteSelectedObject: () => void;
@@ -313,6 +315,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
   catalog: DEFAULT_CATALOG,
   selectedObjectId: null,
   selectedFactionId: "USA",
+  selectedSubdivisionId: null,
   logs: ["World initialized. Select a country or draw a territory to begin."],
   tick: 0,
 
@@ -346,6 +349,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       quests: DEFAULT_QUESTS.map((quest) => ({ ...quest })),
       selectedObjectId: null,
       selectedFactionId: "USA",
+      selectedSubdivisionId: null,
       logs: [`Created ${worldMode} world.`],
       tick: 0
     }),
@@ -366,7 +370,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
   setTool: (tool) => set({ tool }),
   setCatalog: (catalog) => set({ catalog }),
   selectObject: (selectedObjectId) => set({ selectedObjectId }),
-  selectFaction: (selectedFactionId) => set({ selectedFactionId }),
+  selectFaction: (selectedFactionId) =>
+    set({ selectedFactionId, selectedSubdivisionId: null }),
+  selectSubdivision: (selectedSubdivisionId) => set({ selectedSubdivisionId }),
   selectTerritory: (selectedTerritoryId) => set({ selectedTerritoryId }),
 
   addObject: (kind, position = [0, 2.25, 0], factionId) => {
@@ -800,7 +806,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
         state.selectedFactionId &&
         snapshot.factions.some((faction) => faction.id === state.selectedFactionId)
           ? state.selectedFactionId
-          : snapshot.factions[0]?.id ?? null
+          : snapshot.factions[0]?.id ?? null,
+      selectedSubdivisionId: null
     }));
   },
 
@@ -846,6 +853,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       quests: DEFAULT_QUESTS.map((quest) => ({ ...quest })),
       selectedObjectId: null,
       selectedFactionId: "USA",
+      selectedSubdivisionId: null,
       logs: ["World reset."],
       tick: 0
     })
