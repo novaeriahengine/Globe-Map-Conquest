@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { US_STATES } from "../data/usStates";
 import { FLAG_PRESETS } from "../game/flags";
-import type { NationEffectKind, Relation } from "../game/types";
+import type { NationEffectKind, NationFocus, Relation } from "../game/types";
 import { useGameStore } from "../store/useGameStore";
 import { FlagPreview } from "./FlagPreview";
 
@@ -17,10 +17,29 @@ const debuffs: Array<{ kind: NationEffectKind; label: string }> = [
   { kind: "unrest", label: "Unrest" }
 ];
 
+const focuses: Array<{ id: NationFocus; label: string; icon: string }> = [
+  { id: "balanced", label: "Balanced", icon: "⚖" },
+  { id: "military", label: "Military", icon: "⚔" },
+  { id: "economy", label: "Economy", icon: "💰" },
+  { id: "integration", label: "Integrate Land", icon: "🧩" },
+  { id: "cities", label: "Cities", icon: "🏙" },
+  { id: "diplomacy", label: "Diplomacy", icon: "🤝" },
+  { id: "naval", label: "Navy", icon: "⚓" }
+];
+
+function compact(value: number) {
+  return new Intl.NumberFormat("en-US", {
+    notation: "compact",
+    maximumFractionDigits: 1
+  }).format(Math.round(value));
+}
+
 export function CountryPanel() {
   const factions = useGameStore((state) => state.factions);
   const npcs = useGameStore((state) => state.npcs);
   const civilizations = useGameStore((state) => state.civilizations);
+  const tick = useGameStore((state) => state.tick);
+  const era = useGameStore((state) => state.era);
   const selectedFactionId = useGameStore((state) => state.selectedFactionId);
   const supportedFactionId = useGameStore((state) => state.supportedFactionId);
   const selectedSubdivisionId = useGameStore((state) => state.selectedSubdivisionId);
@@ -29,6 +48,8 @@ export function CountryPanel() {
   const supportFaction = useGameStore((state) => state.supportFaction);
   const applyNationEffect = useGameStore((state) => state.applyNationEffect);
   const clearNationEffects = useGameStore((state) => state.clearNationEffects);
+  const setNationFocus = useGameStore((state) => state.setNationFocus);
+  const setIntegrationPolicy = useGameStore((state) => state.setIntegrationPolicy);
   const adjustNation = useGameStore((state) => state.adjustNation);
   const setRelation = useGameStore((state) => state.setRelation);
   const spawnKing = useGameStore((state) => state.spawnKing);
@@ -63,7 +84,7 @@ export function CountryPanel() {
     return (
       <section className="panel country-panel">
         <div className="panel-title">Nations</div>
-        <p className="muted">Click a nation on the 2D map or 3D globe.</p>
+        <p className="muted">Tap a nation on the map.</p>
       </section>
     );
   }
@@ -80,25 +101,30 @@ export function CountryPanel() {
     (item) => item.id === selected.civilizationId
   );
   const civilizationPeople = npcs.filter(
-    (npc) =>
-      npc.state !== "dead" &&
-      npc.civilizationId === selected.civilizationId
+    (npc) => npc.state !== "dead" && npc.civilizationId === selected.civilizationId
   );
   const averageLoyalty =
     civilizationPeople.reduce((sum, npc) => sum + npc.loyalty, 0) /
     Math.max(1, civilizationPeople.length);
-
   const countryNpcs = npcs
     .filter((npc) => npc.factionId === selected.id && npc.state !== "dead")
     .sort((a, b) => b.kills - a.kills);
   const deadNpcs = npcs.filter(
     (npc) => npc.factionId === selected.id && npc.state === "dead"
   ).length;
-
+  const occupiedFor =
+    selected.occupationStartedTick == null ? 0 : Math.max(0, tick - selected.occupationStartedTick);
   const selectedState =
     selected.id === "USA"
       ? US_STATES.find((state) => state.id === selectedSubdivisionId) ?? null
       : null;
+  const military = selected.military ?? {
+    army: selected.army,
+    navy: 0,
+    airForce: 0,
+    reserves: 0,
+    doctrine: "balanced" as const
+  };
 
   return (
     <section className="panel country-panel">
@@ -139,40 +165,110 @@ export function CountryPanel() {
         </div>
       )}
 
-      <div className="stat-grid">
-        <div><span>Army</span><strong>{Math.round(selected.army)}</strong></div>
-        <div><span>Treasury</span><strong>{Math.round(selected.treasury)}</strong></div>
+      {controller && (
+        <button
+          className="occupation-banner occupation-button"
+          onClick={() => selectFaction(controller.id)}
+        >
+          <span>CONQUERED / OCCUPIED BY</span>
+          <strong>{controller.emoji} {controller.name}</strong>
+          <small>
+            Occupied for {occupiedFor} ticks · tap to inspect conqueror
+          </small>
+        </button>
+      )}
+
+      <div className="stat-grid nation-main-stats">
+        <div><span>Population</span><strong>{compact(selected.population ?? 0)}</strong></div>
+        <div><span>Active military</span><strong>{compact(selected.army)}</strong></div>
+        <div><span>Treasury</span><strong>{compact(selected.treasury)}</strong></div>
         <div><span>Stability</span><strong>{Math.round(selected.stability)}%</strong></div>
-        <div><span>Alive NPCs</span><strong>{countryNpcs.length}</strong></div>
+        <div><span>Cities</span><strong>{selected.cityCount ?? 0}</strong></div>
+        <div><span>Towns</span><strong>{selected.townCount ?? 0}</strong></div>
       </div>
 
-      {controller && (
-        <div className="occupation-banner">
-          Controlled by <strong>{controller.name}</strong>
+      <div className="section-label">National priority</div>
+      <div className="focus-grid">
+        {focuses.map((focus) => (
+          <button
+            key={focus.id}
+            className={selected.focus === focus.id ? "focus-button active" : "focus-button"}
+            onClick={() => setNationFocus(selected.id, focus.id)}
+          >
+            <span>{focus.icon}</span>
+            <strong>{focus.label}</strong>
+          </button>
+        ))}
+      </div>
+
+      {selected.focus === "integration" && (
+        <div className="integration-policy">
+          <span>Integration policy</span>
+          <select
+            className="select-input"
+            value={selected.integrationPolicy ?? "balanced"}
+            onChange={(event) =>
+              setIntegrationPolicy(
+                selected.id,
+                event.target.value as "local" | "balanced" | "settler"
+              )
+            }
+          >
+            <option value="local">Local autonomy</option>
+            <option value="balanced">Balanced integration</option>
+            <option value="settler">Settler migration</option>
+          </select>
+          <small>
+            Stronger settlement policies move more citizens into conquered land and
+            build integration faster, but cost money and population at home.
+          </small>
         </div>
       )}
+
+      <div className="section-label">Military · {era}</div>
+      <div className="military-grid">
+        <div><span>🪖 Army</span><strong>{compact(military.army)}</strong></div>
+        <div><span>⚓ Navy</span><strong>{compact(military.navy)}</strong></div>
+        <div>
+          <span>✈ Air</span>
+          <strong>{era === "ancient" || era === "medieval" ? "—" : compact(military.airForce)}</strong>
+        </div>
+        <div><span>🛡 Reserves</span><strong>{compact(military.reserves)}</strong></div>
+      </div>
+      <div className="doctrine-row">
+        <span>Doctrine</span>
+        <strong>{military.doctrine}</strong>
+      </div>
 
       <button
         className={supported ? "button support-button active full" : "button support-button full"}
         onClick={() => supportFaction(supported ? null : selected.id)}
       >
-        {supported ? "★ You Support This Nation" : "☆ Support This Nation"}
+        {supported ? "★ FAVORITE NATION — ACTIVE" : "☆ Make Favorite Nation"}
       </button>
 
-      <div className="section-label">Direct support</div>
-      <div className="nation-adjust-grid">
-        <button className="button compact" onClick={() => adjustNation(selected.id, "army", 25)}>
-          +25 Army
-        </button>
-        <button className="button compact" onClick={() => adjustNation(selected.id, "treasury", 300)}>
-          +300 Money
-        </button>
-        <button className="button compact" onClick={() => adjustNation(selected.id, "stability", 10)}>
-          +10 Stability
-        </button>
-      </div>
+      {supported && (
+        <div className="favorite-card">
+          <strong>You are backing {selected.name}</strong>
+          <span>
+            Favorite nations stay highlighted in gold and are easier to control from
+            God/Play mode.
+          </span>
+          <div className="nation-adjust-grid">
+            <button className="button compact" onClick={() => adjustNation(selected.id, "army", 25_000)}>
+              +25K Troops
+            </button>
+            <button className="button compact" onClick={() => adjustNation(selected.id, "treasury", 25_000)}>
+              +25K Funds
+            </button>
+            <button className="button compact" onClick={() => adjustNation(selected.id, "stability", 10)}>
+              +10 Stability
+            </button>
+          </div>
+        </div>
+      )}
 
-      <div className="section-label">Buffs</div>
+      <div className="section-label">God buffs</div>
       <div className="effect-button-grid">
         {buffs.map((buff) => (
           <button
@@ -185,7 +281,7 @@ export function CountryPanel() {
         ))}
       </div>
 
-      <div className="section-label">Debuffs</div>
+      <div className="section-label">God debuffs</div>
       <div className="effect-button-grid">
         {debuffs.map((debuff) => (
           <button
@@ -210,41 +306,6 @@ export function CountryPanel() {
             Clear Effects
           </button>
         </div>
-      )}
-
-      <div className="country-color-row">
-        <label>
-          <span>Nation color</span>
-          <input
-            type="color"
-            value={selected.color}
-            onChange={(event) => setFactionColor(selected.id, event.target.value)}
-          />
-        </label>
-        <div className="color-swatch" style={{ background: selected.color }} />
-        <small>This color is used on both the flat map and globe.</small>
-      </div>
-
-      {selected.id === "USA" && (
-        <>
-          <div className="section-label">States</div>
-          <select
-            className="select-input"
-            value={selectedSubdivisionId ?? ""}
-            onChange={(event) => selectSubdivision(event.target.value || null)}
-          >
-            <option value="">Select a state</option>
-            {US_STATES.map((state) => (
-              <option key={state.id} value={state.id}>{state.name}</option>
-            ))}
-          </select>
-          {selectedState && (
-            <div className="state-selection">
-              <span>{selectedState.id}</span>
-              <strong>{selectedState.name}</strong>
-            </div>
-          )}
-        </>
       )}
 
       <div className="section-label">Diplomacy / Conflict</div>
@@ -275,7 +336,42 @@ export function CountryPanel() {
         </div>
       </div>
 
-      <div className="section-label">Ruler / NPC army</div>
+      <div className="country-color-row">
+        <label>
+          <span>Nation color</span>
+          <input
+            type="color"
+            value={selected.color}
+            onChange={(event) => setFactionColor(selected.id, event.target.value)}
+          />
+        </label>
+        <div className="color-swatch" style={{ background: selected.color }} />
+        <small>Used on the 2D map and 3D globe.</small>
+      </div>
+
+      {selected.id === "USA" && (
+        <>
+          <div className="section-label">States</div>
+          <select
+            className="select-input"
+            value={selectedSubdivisionId ?? ""}
+            onChange={(event) => selectSubdivision(event.target.value || null)}
+          >
+            <option value="">Select a state</option>
+            {US_STATES.map((state) => (
+              <option key={state.id} value={state.id}>{state.name}</option>
+            ))}
+          </select>
+          {selectedState && (
+            <div className="state-selection">
+              <span>{selectedState.id}</span>
+              <strong>{selectedState.name}</strong>
+            </div>
+          )}
+        </>
+      )}
+
+      <div className="section-label">Ruler / tracked people</div>
       <div className="inline-row">
         <span className="muted">{selected.rulerName ?? "No ruler spawned"}</span>
         <button className="button compact" onClick={() => spawnKing(selected.id)}>
@@ -284,20 +380,28 @@ export function CountryPanel() {
       </div>
 
       <div className="npc-summary">
-        <div><span>Alive</span><strong>{countryNpcs.length}</strong></div>
-        <div><span>Lost</span><strong>{deadNpcs}</strong></div>
+        <div><span>Tracked alive</span><strong>{countryNpcs.length}</strong></div>
+        <div><span>Tracked dead</span><strong>{deadNpcs}</strong></div>
       </div>
 
       <div className="npc-list">
-        {countryNpcs.slice(0, 5).map((npc) => (
-          <div key={npc.id}>
-            <div>
-              <strong>{npc.name}</strong>
-              <span>{npc.species} · {npc.state}</span>
+        {countryNpcs.slice(0, 7).map((npc) => {
+          const parents = (npc.parentIds ?? [])
+            .map((id) => npcs.find((person) => person.id === id)?.name)
+            .filter(Boolean);
+          return (
+            <div key={npc.id}>
+              <div>
+                <strong>{npc.name}</strong>
+                <span>{npc.nationality ?? selected.name} · gen {npc.generation ?? 0}</span>
+              </div>
+              <small>
+                {npc.species} · {npc.state} · loyalty {Math.round(npc.loyalty)}%
+                {parents.length ? ` · child of ${parents.join(" + ")}` : " · founder line"}
+              </small>
             </div>
-            <small>{npc.traits.join(" / ")} · {npc.kills} kills</small>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       {civilization && (
@@ -315,24 +419,14 @@ export function CountryPanel() {
             </div>
 
             <div className="civilization-stats">
-              <div>
-                <span>Loyal people</span>
-                <strong>{civilizationPeople.length}</strong>
-              </div>
-              <div>
-                <span>Avg loyalty</span>
-                <strong>{Math.round(averageLoyalty)}%</strong>
-              </div>
-              <div>
-                <span>Revivals</span>
-                <strong>{civilization.revivalCount}</strong>
-              </div>
+              <div><span>Loyal agents</span><strong>{civilizationPeople.length}</strong></div>
+              <div><span>Avg loyalty</span><strong>{Math.round(averageLoyalty)}%</strong></div>
+              <div><span>Revivals</span><strong>{civilization.revivalCount}</strong></div>
             </div>
 
             <p>
-              If this state is conquered, its civilization remains in civilians and
-              descendants. Loyal people can restore the homeland later or found a
-              successor such as New {civilization.name} somewhere else.
+              Conquest does not delete this people. Descendants can restore the
+              homeland or found a successor state while keeping the same history.
             </p>
 
             <div className="civilization-history">
