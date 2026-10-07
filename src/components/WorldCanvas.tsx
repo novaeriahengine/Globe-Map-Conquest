@@ -1353,6 +1353,30 @@ export function Map2D() {
             });
           })}
 
+        {zoom >= 6 &&
+          factions.flatMap((faction) => {
+            const [x, y] = flatProject(faction.lat, faction.lon);
+            if (!visible(x, y, 45)) return [];
+            const count = Math.min(14, Math.max(0, faction.townCount ?? 0));
+            return Array.from({ length: count }, (_, index) => {
+              const angle =
+                deterministicCityAngle(faction.id + "-town", index) * Math.PI * 2;
+              const radius = 10 + (index % 7) * 3.6;
+              return (
+                <rect
+                  key={`${faction.id}-town-${index}`}
+                  x={x + Math.cos(angle) * radius - 0.55}
+                  y={y + Math.sin(angle) * radius - 0.55}
+                  width={1.1}
+                  height={1.1}
+                  rx={0.2}
+                  fill="#a9bbc9"
+                  opacity={0.72}
+                />
+              );
+            });
+          })}
+
         {armyMarkers
           .filter((marker) => visible(marker.x, marker.y, 30))
           .map((marker) => (
