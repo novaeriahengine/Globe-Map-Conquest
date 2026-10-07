@@ -1,4 +1,5 @@
 import { getApps, initializeApp } from "firebase/app";
+import { getAuth, signInAnonymously } from "firebase/auth";
 import {
   initializeFirestore,
   persistentLocalCache,
@@ -23,3 +24,12 @@ export const firestore = initializeFirestore(firebaseApp, {
     tabManager: persistentMultipleTabManager()
   })
 });
+
+
+export const firebaseAuth = getAuth(firebaseApp);
+
+export async function ensureFirebaseSession() {
+  if (firebaseAuth.currentUser) return firebaseAuth.currentUser;
+  const credential = await signInAnonymously(firebaseAuth);
+  return credential.user;
+}
