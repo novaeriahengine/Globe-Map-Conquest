@@ -54,7 +54,8 @@ export function createInitialFactions(): Faction[] {
       controlledBy: null,
       rulerName: null,
       flagPresetId: flagPresets[index % flagPresets.length],
-      relations: {}
+      relations: {},
+      effects: []
     }))
     .sort((a, b) => a.name.localeCompare(b.name));
 }
