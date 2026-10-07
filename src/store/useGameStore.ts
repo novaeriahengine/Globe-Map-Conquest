@@ -1756,10 +1756,84 @@ export const useGameStore = create<GameStore>((set, get) => {
         npcs = ensureSquad(npcs, faction, state.catalog, 8);
       }
 
-      const mutableNpcs = npcs.map((npc) => ({ ...npc, stats: { ...npc.stats } }));
+      const mutableNpcs = npcs.map((npc) => ({
+        ...npc,
+        tags: [...(npc.tags ?? [])],
+        parentIds: [...(npc.parentIds ?? [])],
+        childIds: [...(npc.childIds ?? [])],
+        stats: { ...npc.stats }
+      }));
+
+      // Family simulation uses tracked agents while large civilian populations stay
+      // aggregated. This keeps a real ancestry graph without trying to render or
+      // store millions of individual people in one world document.
+      if (
+        nextTick % eraConfig.birthEvery === 0 &&
+        mutableNpcs.length < 1_500
+      ) {
+        const familyFactions = nextFactions
+          .filter(
+            (faction) =>
+              mutableNpcs.filter(
+                (npc) =>
+                  npc.factionId === faction.id &&
+                  npc.state !== "dead"
+              ).length >= 2
+          )
+          .slice(0, 12);
+
+        for (const faction of familyFactions) {
+          const adults = mutableNpcs.filter(
+            (npc) =>
+              npc.factionId === faction.id &&
+              npc.state !== "dead" &&
+              npcAgeYears(npc, nextTick) >= 18 &&
+              npcAgeYears(npc, nextTick) <= 46
+          );
+          const mother = adults.find((npc) => npc.sex === "female");
+          const father = adults.find(
+            (npc) => npc.sex === "male" && npc.id !== mother?.id
+          );
+          if (!mother || !father) continue;
+
+          const birthRoll = deterministicRoll(
+            `${mother.id}:${father.id}:birth`,
+            nextTick
+          );
+          if (birthRoll > 0.64) continue;
+
+          const child = makeChildNpc(
+            mother,
+            father,
+            faction,
+            state.catalog,
+            nextTick
+          );
+          mutableNpcs.push(child);
+          mother.partnerId = mother.partnerId ?? father.id;
+          father.partnerId = father.partnerId ?? mother.id;
+          mother.childIds = Array.from(
+            new Set([...(mother.childIds ?? []), child.id])
+          );
+          father.childIds = Array.from(
+            new Set([...(father.childIds ?? []), child.id])
+          );
+          faction.population = (faction.population ?? 2) + 1;
+
+          birthEvents.push(
+            `${child.name} was born in ${faction.name}, generation ${child.generation ?? 1}.`
+          );
+        }
+      }
 
       for (const npc of mutableNpcs) {
         if (npc.state === "dead") continue;
+
+        if (npcAgeYears(npc, nextTick) < 16) {
+          npc.state = "idle";
+          npc.targetFactionId = null;
+          continue;
+        }
 
         const faction = byId.get(npc.factionId);
         if (!faction) continue;
@@ -1783,7 +1857,13 @@ export const useGameStore = create<GameStore>((set, get) => {
         const distance = angleDistance(current, target);
 
         if (distance > 4.5) {
-          const step = 0.22 + npc.stats.speed * 0.008;
+          const military = faction.military;
+          const expeditionPenalty =
+            distance > 24 && (military?.navy ?? 0) < 2_500 ? 0.42 : 1;
+          const step =
+            (0.16 + npc.stats.speed * 0.006) *
+            eraConfig.movement *
+            expeditionPenalty;
           const [lat, lon] = moveToward(current, target, step);
           npc.lat = lat;
           npc.lon = lon;
@@ -1924,7 +2004,6 @@ export const useGameStore = create<GameStore>((set, get) => {
         }
       }
 
-      const nextTick = state.tick + 1;
       const revivalEvents: string[] = [];
       const nextTerritories = [...state.territories];
 
