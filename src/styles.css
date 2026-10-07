@@ -698,3 +698,50 @@ button {
     grid-template-columns: repeat(3, 1fr);
   }
 }
+
+
+.online-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 6px;
+}
+
+.online-status {
+  border-radius: 999px;
+  padding: 3px 7px;
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  background: #202a35;
+  color: #8fa0b4;
+}
+
+.online-status.online {
+  background: #153b2e;
+  color: #6fe0a6;
+}
+
+.online-status.connecting {
+  background: #24344e;
+  color: #8ec5ff;
+}
+
+.online-status.error {
+  background: #492028;
+  color: #ff8999;
+}
+
+.online-error {
+  margin-top: 7px;
+  padding: 7px;
+  border: 1px solid #6d303a;
+  border-radius: 6px;
+  background: #30181d;
+  color: #ff9dac;
+  font-size: 10px;
+}
+
+.online-note {
+  margin: 8px 0 0;
+}
