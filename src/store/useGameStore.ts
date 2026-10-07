@@ -1201,7 +1201,37 @@ export const useGameStore = create<GameStore>((set, get) => {
     })),
 
   createWorld: (worldMode, name) => {
-    const factions = createInitialFactions();
+    const worldSeed = Math.floor(Math.random() * 999_999_999);
+    const catalog = get().catalog;
+    const factions =
+      worldMode === "earth"
+        ? createInitialFactions()
+        : createProceduralFactions(
+            worldSeed,
+            catalog,
+            worldMode === "sandbox" ? 18 : 12
+          );
+    const territories =
+      worldMode === "earth"
+        ? []
+        : createProceduralTerritories(factions, worldSeed);
+    const initialNpcs =
+      worldMode === "earth"
+        ? []
+        : factions.flatMap((faction) => {
+            const founders = [
+              makeNpc(faction, catalog, 0),
+              makeNpc(faction, catalog, 1)
+            ];
+            founders.forEach((npc) => {
+              npc.populationWeight = (faction.population ?? 100) / founders.length;
+              npc.tags = Array.from(
+                new Set([...(npc.tags ?? []), "Original Founder"])
+              );
+            });
+            return founders;
+          });
+
     set({
       worldName:
         name ??
@@ -1214,24 +1244,28 @@ export const useGameStore = create<GameStore>((set, get) => {
       viewMode: "map2d",
       supportedFactionId: null,
       workspaceMode: "play",
-      era: "modern",
+      era: worldMode === "earth" ? "modern" : "medieval",
       conflictScenario: "organic",
       populationSeed: 100,
-      seed: Math.floor(Math.random() * 999_999_999),
+      seed: worldSeed,
       playMode: false,
       tool: "select",
       objects: [],
       factions,
       civilizations: civilizationsFromFactions(factions),
-      territories: [],
+      territories,
       territoryDraft: [],
       selectedTerritoryId: null,
-      npcs: [],
+      npcs: initialNpcs,
       quests: DEFAULT_QUESTS.map((quest) => ({ ...quest })),
       selectedObjectId: null,
-      selectedFactionId: "USA",
+      selectedFactionId: factions[0]?.id ?? null,
       selectedSubdivisionId: null,
-      logs: [`Created ${worldMode} world in 2D battle mode.`],
+      logs: [
+        worldMode === "earth"
+          ? "Created Earth world in 2D battle mode."
+          : `Created ${worldMode} world with ${factions.length} terrain-shaped starting civilizations and founder families.`
+      ],
       tick: 0
     });
   },
