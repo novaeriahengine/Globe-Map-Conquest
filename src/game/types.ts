@@ -53,6 +53,20 @@ export interface SceneObject {
   factionId?: string;
 }
 
+export interface CivilizationRecord {
+  id: string;
+  name: string;
+  adjective: string;
+  foundingTick: number;
+  extinctionTick: number | null;
+  homeland: LatLon;
+  color: string;
+  flagPresetId: FlagPresetId;
+  legacyNames: string[];
+  revivalCount: number;
+  history: string[];
+}
+
 export interface Faction {
   id: string;
   name: string;
@@ -74,6 +88,9 @@ export interface Faction {
   allianceName?: string | null;
   relations: Record<string, Relation>;
   effects: NationEffect[];
+  civilizationId: string;
+  occupationStartedTick?: number | null;
+  revivalCount?: number;
 }
 
 export interface TerritoryPatch {
@@ -98,6 +115,8 @@ export interface TraitStats {
 export interface NpcUnit {
   id: string;
   factionId: string;
+  civilizationId: string;
+  loyalty: number;
   name: string;
   species: string;
   traits: string[];
@@ -151,6 +170,7 @@ export interface SavedWorld {
   seed: number;
   objects: SceneObject[];
   factions: Faction[];
+  civilizations: CivilizationRecord[];
   territories: TerritoryPatch[];
   npcs: NpcUnit[];
   quests: Quest[];
@@ -164,7 +184,7 @@ export interface LegacySavedWorldV1 {
   worldMode: "earth" | "procedural";
   seed: number;
   objects: SceneObject[];
-  factions: Array<Omit<Faction, "accentColor" | "effects">>;
+  factions: Array<Omit<Faction, "accentColor" | "effects" | "civilizationId">>;
   logs: string[];
   tick: number;
 }

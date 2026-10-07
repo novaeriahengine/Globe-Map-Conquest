@@ -55,7 +55,10 @@ export function createInitialFactions(): Faction[] {
       rulerName: null,
       flagPresetId: flagPresets[index % flagPresets.length],
       relations: {},
-      effects: []
+      effects: [],
+      civilizationId: `civ-${country.cca3}`,
+      occupationStartedTick: null,
+      revivalCount: 0
     }))
     .sort((a, b) => a.name.localeCompare(b.name));
 }

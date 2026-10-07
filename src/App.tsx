@@ -14,6 +14,7 @@ export default function App() {
   const simulateTick = useGameStore((state) => state.simulateTick);
   const worldMode = useGameStore((state) => state.worldMode);
   const viewMode = useGameStore((state) => state.viewMode);
+  const setViewMode = useGameStore((state) => state.setViewMode);
   const worldName = useGameStore((state) => state.worldName);
 
   useEffect(() => {
@@ -67,6 +68,21 @@ export default function App() {
 
             <section className={viewMode === "map2d" ? "viewport viewport-2d" : "viewport"}>
               {viewMode === "map2d" ? <Map2D /> : <WorldCanvas />}
+
+              <div className="viewport-mode-switch" aria-label="World view mode">
+                <button
+                  className={viewMode === "map2d" ? "active" : ""}
+                  onClick={() => setViewMode("map2d")}
+                >
+                  🗺 2D WORLD
+                </button>
+                <button
+                  className={viewMode === "globe3d" ? "active" : ""}
+                  onClick={() => setViewMode("globe3d")}
+                >
+                  🌍 3D GLOBE
+                </button>
+              </div>
 
               <div className="viewport-hint">
                 {viewMode === "map2d"
