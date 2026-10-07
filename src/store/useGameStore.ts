@@ -9,6 +9,8 @@ import type {
   LatLon,
   LegacySavedWorldV1,
   NameCatalog,
+  NationEffect,
+  NationEffectKind,
   NpcUnit,
   ObjectKind,
   Quest,
@@ -18,12 +20,15 @@ import type {
   TerritoryPatch,
   TraitStats,
   Vec3,
+  ViewMode,
   WorldMode
 } from "../game/types";
 
 interface GameStore {
   worldName: string;
   worldMode: WorldMode;
+  viewMode: ViewMode;
+  supportedFactionId: string | null;
   seed: number;
   playMode: boolean;
   tool: EditorTool;
@@ -43,6 +48,15 @@ interface GameStore {
 
   setWorldName: (name: string) => void;
   setWorldMode: (mode: WorldMode) => void;
+  setViewMode: (mode: ViewMode) => void;
+  supportFaction: (factionId: string | null) => void;
+  applyNationEffect: (factionId: string, kind: NationEffectKind) => void;
+  clearNationEffects: (factionId: string) => void;
+  adjustNation: (
+    factionId: string,
+    field: "army" | "treasury" | "stability",
+    amount: number
+  ) => void;
   createWorld: (mode: WorldMode, name?: string) => void;
   setSeed: (seed: number) => void;
   randomizeSeed: () => void;
@@ -122,6 +136,86 @@ function relationLabel(relation: Relation) {
   if (relation === "war") return "declared war on";
   if (relation === "allied") return "formed an alliance with";
   return "normalized relations with";
+}
+
+function makeNationEffect(kind: NationEffectKind): NationEffect {
+  const configs: Record<
+    NationEffectKind,
+    Omit<NationEffect, "id" | "kind">
+  > = {
+    "military-aid": {
+      label: "Military Aid",
+      attackMultiplier: 1.28,
+      defenseMultiplier: 1.14,
+      incomeMultiplier: 1,
+      moraleModifier: 8,
+      remainingTicks: 45,
+      positive: true
+    },
+    "economic-aid": {
+      label: "Economic Aid",
+      attackMultiplier: 1,
+      defenseMultiplier: 1,
+      incomeMultiplier: 2,
+      moraleModifier: 4,
+      remainingTicks: 60,
+      positive: true
+    },
+    "morale-boost": {
+      label: "Morale Boost",
+      attackMultiplier: 1.1,
+      defenseMultiplier: 1.1,
+      incomeMultiplier: 1,
+      moraleModifier: 18,
+      remainingTicks: 50,
+      positive: true
+    },
+    sanctions: {
+      label: "Sanctions",
+      attackMultiplier: 0.94,
+      defenseMultiplier: 0.96,
+      incomeMultiplier: 0.48,
+      moraleModifier: -10,
+      remainingTicks: 55,
+      positive: false
+    },
+    "combat-fatigue": {
+      label: "Combat Fatigue",
+      attackMultiplier: 0.72,
+      defenseMultiplier: 0.88,
+      incomeMultiplier: 1,
+      moraleModifier: -14,
+      remainingTicks: 40,
+      positive: false
+    },
+    unrest: {
+      label: "Unrest",
+      attackMultiplier: 0.9,
+      defenseMultiplier: 0.72,
+      incomeMultiplier: 0.8,
+      moraleModifier: -22,
+      remainingTicks: 45,
+      positive: false
+    }
+  };
+
+  return {
+    id: makeId("effect"),
+    kind,
+    ...configs[kind]
+  };
+}
+
+function nationModifiers(faction: Faction) {
+  return (faction.effects ?? []).reduce(
+    (result, effect) => ({
+      attack: result.attack * effect.attackMultiplier,
+      defense: result.defense * effect.defenseMultiplier,
+      income: result.income * effect.incomeMultiplier,
+      morale: result.morale + effect.moraleModifier
+    }),
+    { attack: 1, defense: 1, income: 1, morale: 0 }
+  );
 }
 
 function choose<T>(items: T[], fallback: T, seed = Math.random()) {
@@ -281,17 +375,30 @@ function questProgress(
 }
 
 function upgradeSnapshot(snapshot: SavedWorld | LegacySavedWorldV1): SavedWorld {
-  if (snapshot.version === 2) return snapshot;
+  if (snapshot.version === 2) {
+    return {
+      ...snapshot,
+      viewMode: snapshot.viewMode ?? "globe3d",
+      supportedFactionId: snapshot.supportedFactionId ?? null,
+      factions: snapshot.factions.map((faction) => ({
+        ...faction,
+        effects: faction.effects ?? []
+      }))
+    };
+  }
 
   return {
     version: 2,
     worldName: snapshot.worldName,
     worldMode: snapshot.worldMode,
+    viewMode: "globe3d",
+    supportedFactionId: null,
     seed: snapshot.seed,
     objects: snapshot.objects,
     factions: snapshot.factions.map((faction) => ({
       ...faction,
-      accentColor: seededColor(faction.id + "-accent")
+      accentColor: seededColor(faction.id + "-accent"),
+      effects: []
     })),
     territories: [],
     npcs: [],
@@ -304,6 +411,8 @@ function upgradeSnapshot(snapshot: SavedWorld | LegacySavedWorldV1): SavedWorld 
 export const useGameStore = create<GameStore>((set, get) => ({
   worldName: "New Globe World",
   worldMode: "earth",
+  viewMode: "globe3d",
+  supportedFactionId: null,
   seed: 48271,
   playMode: false,
   tool: "select",
@@ -329,6 +438,70 @@ export const useGameStore = create<GameStore>((set, get) => ({
       logs: [`World mode changed to ${worldMode}.`, ...state.logs].slice(0, 120)
     })),
 
+  setViewMode: (viewMode) =>
+    set((state) => ({
+      viewMode,
+      tool: state.tool === "territory" ? "territory" : "select",
+      logs: [
+        viewMode === "map2d" ? "Switched to 2D battle map." : "Switched to 3D globe.",
+        ...state.logs
+      ].slice(0, 120)
+    })),
+
+  supportFaction: (supportedFactionId) =>
+    set((state) => ({
+      supportedFactionId,
+      selectedFactionId: supportedFactionId ?? state.selectedFactionId,
+      logs: [
+        supportedFactionId
+          ? `You are now supporting ${state.factions.find((faction) => faction.id === supportedFactionId)?.name ?? "this nation"}.`
+          : "Nation support cleared.",
+        ...state.logs
+      ].slice(0, 120)
+    })),
+
+  applyNationEffect: (factionId, kind) =>
+    set((state) => {
+      const target = state.factions.find((faction) => faction.id === factionId);
+      if (!target) return state;
+      const effect = makeNationEffect(kind);
+      return {
+        factions: state.factions.map((faction) =>
+          faction.id === factionId
+            ? { ...faction, effects: [...(faction.effects ?? []), effect].slice(-8) }
+            : faction
+        ),
+        logs: [
+          `${effect.positive ? "Buff" : "Debuff"} applied to ${target.name}: ${effect.label}.`,
+          ...state.logs
+        ].slice(0, 120)
+      };
+    }),
+
+  clearNationEffects: (factionId) =>
+    set((state) => ({
+      factions: state.factions.map((faction) =>
+        faction.id === factionId ? { ...faction, effects: [] } : faction
+      )
+    })),
+
+  adjustNation: (factionId, field, amount) =>
+    set((state) => ({
+      factions: state.factions.map((faction) => {
+        if (faction.id !== factionId) return faction;
+        if (field === "army") {
+          return { ...faction, army: Math.max(0, Math.min(500, faction.army + amount)) };
+        }
+        if (field === "treasury") {
+          return { ...faction, treasury: Math.max(0, faction.treasury + amount) };
+        }
+        return {
+          ...faction,
+          stability: Math.max(0, Math.min(100, faction.stability + amount))
+        };
+      })
+    })),
+
   createWorld: (worldMode, name) =>
     set({
       worldName:
@@ -339,6 +512,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
             ? "WorldBox Sandbox"
             : "Procedural Planet"),
       worldMode,
+      viewMode: "globe3d",
+      supportedFactionId: null,
       seed: Math.floor(Math.random() * 999_999_999),
       playMode: false,
       tool: "select",
@@ -642,7 +817,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
         rulerName: null,
         flagPresetId: "sunrise",
         allianceName: null,
-        relations: {}
+        relations: {},
+        effects: []
       };
 
       return {
@@ -721,12 +897,33 @@ export const useGameStore = create<GameStore>((set, get) => ({
         stats: { ...npc.stats }
       }));
 
-      const nextFactions = state.factions.map((faction) => ({
-        ...faction,
-        relations: { ...faction.relations },
-        treasury: faction.treasury + 2,
-        army: Math.min(250, faction.army + (faction.controlledBy ? 0 : 0.12))
-      }));
+      const nextFactions = state.factions.map((faction) => {
+        const modifiers = nationModifiers(faction);
+        const effects = (faction.effects ?? [])
+          .map((effect) => ({
+            ...effect,
+            remainingTicks: effect.remainingTicks - 1
+          }))
+          .filter((effect) => effect.remainingTicks > 0);
+
+        return {
+          ...faction,
+          effects,
+          relations: { ...faction.relations },
+          treasury: faction.treasury + 2 * modifiers.income,
+          stability: Math.max(
+            0,
+            Math.min(100, faction.stability + modifiers.morale * 0.015)
+          ),
+          army: Math.min(
+            500,
+            faction.army +
+              (faction.controlledBy
+                ? 0
+                : 0.12 * Math.max(0.35, 1 + modifiers.morale / 100))
+          )
+        };
+      });
 
       const byId = new Map(nextFactions.map((faction) => [faction.id, faction]));
       const warEvents: string[] = [];
@@ -784,7 +981,14 @@ export const useGameStore = create<GameStore>((set, get) => ({
         if (!enemy) continue;
 
         const luck = 0.82 + Math.random() * (0.36 + npc.stats.luck / 400);
-        const rawDamage = npc.attack * luck - enemy.defense * 0.25;
+        const attackerMods = nationModifiers(faction);
+        const enemyFaction = byId.get(enemy.factionId);
+        const defenderMods = enemyFaction
+          ? nationModifiers(enemyFaction)
+          : { attack: 1, defense: 1, income: 1, morale: 0 };
+        const rawDamage =
+          npc.attack * attackerMods.attack * luck -
+          enemy.defense * defenderMods.defense * 0.25;
         const damage = Math.max(1, rawDamage);
         enemy.hp -= damage;
 
@@ -821,12 +1025,17 @@ export const useGameStore = create<GameStore>((set, get) => ({
             defenderUnits.reduce((sum, npc) => sum + npc.stats.discipline, 0) /
             Math.max(1, defenderUnits.length);
 
+          const attackerMods = nationModifiers(attacker);
+          const defenderMods = nationModifiers(defender);
+
           const attackRoll =
             attacker.army *
+            attackerMods.attack *
             (0.035 + Math.random() * 0.035) *
             (0.75 + attackerDiscipline / 150);
           const defenseRoll =
             defender.army *
+            defenderMods.defense *
             (0.035 + Math.random() * 0.035) *
             (0.75 + defenderDiscipline / 150);
 
@@ -886,6 +1095,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
       version: 2,
       worldName: state.worldName,
       worldMode: state.worldMode,
+      viewMode: state.viewMode,
+      supportedFactionId: state.supportedFactionId,
       seed: state.seed,
       objects: state.objects,
       factions: state.factions,
@@ -903,6 +1114,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
     set((state) => ({
       worldName: snapshot.worldName,
       worldMode: snapshot.worldMode,
+      viewMode: snapshot.viewMode ?? "globe3d",
+      supportedFactionId: snapshot.supportedFactionId ?? null,
       seed: snapshot.seed,
       objects: snapshot.objects,
       factions: snapshot.factions,
@@ -953,6 +1166,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
     set({
       worldName: "New Globe World",
       worldMode: "earth",
+      viewMode: "globe3d",
+      supportedFactionId: null,
       seed: 48271,
       playMode: false,
       tool: "select",
