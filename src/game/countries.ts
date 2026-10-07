@@ -47,6 +47,7 @@ export function createInitialFactions(): Faction[] {
       lat: country.latlng![0],
       lon: country.latlng![1],
       color: seededColor(country.cca3),
+      accentColor: seededColor(country.cca3 + "-accent"),
       army: stableNumber(country.cca3 + "army", 35, 140),
       treasury: stableNumber(country.cca3 + "treasury", 250, 1800),
       stability: stableNumber(country.cca3 + "stability", 55, 95),
