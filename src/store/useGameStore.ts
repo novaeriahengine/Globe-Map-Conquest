@@ -1494,7 +1494,14 @@ export const useGameStore = create<GameStore>((set, get) => {
         history: [...civilization.history]
       }));
 
-      const nextFactions = state.factions.map((faction) => {
+      const nextTick = state.tick + 1;
+      const eraConfig = eraSettings(state.era);
+      const governanceEvents: string[] = [];
+      const diplomacyEvents: string[] = [];
+      const birthEvents: string[] = [];
+
+      const nextFactions = state.factions.map((rawFaction) => {
+        const faction = normalizeFactionCivilization(rawFaction);
         const modifiers = nationModifiers(faction);
         const effects = (faction.effects ?? [])
           .map((effect) => ({
@@ -1503,28 +1510,245 @@ export const useGameStore = create<GameStore>((set, get) => {
           }))
           .filter((effect) => effect.remainingTicks > 0);
 
+        const focus = faction.focus ?? "balanced";
+        const population = Math.max(2, faction.population ?? 100_000);
+        const focusIncome =
+          focus === "economy" ? 1.75 : focus === "cities" ? 1.2 : 1;
+        const baseIncome =
+          Math.max(8, population / 750_000) *
+          focusIncome *
+          modifiers.income;
+
+        const recruitmentRate =
+          focus === "military"
+            ? 0.000012
+            : focus === "balanced"
+              ? 0.000004
+              : 0.0000018;
+        const recruitment =
+          faction.controlledBy
+            ? 0
+            : population *
+              recruitmentRate *
+              Math.max(0.5, 1 + modifiers.morale / 100);
+
+        const military = {
+          ...(faction.military ?? {
+            army: faction.army,
+            navy: Math.round(faction.army * 0.1),
+            airForce: Math.round(faction.army * 0.07),
+            reserves: Math.round(faction.army * 1.5),
+            doctrine: "balanced" as const
+          })
+        };
+
+        const army = Math.min(
+          Math.max(5_000, population * 0.12),
+          Math.max(0, faction.army + recruitment)
+        );
+
+        if (focus === "naval" && !faction.controlledBy) {
+          military.navy = Math.min(
+            Math.max(1_000, population * 0.02),
+            military.navy + Math.max(8, population * 0.0000025)
+          );
+          military.doctrine = "naval";
+        }
+        if (focus === "military" && !faction.controlledBy) {
+          military.reserves += Math.max(20, population * 0.000004);
+          military.doctrine = "aggressive";
+        }
+        if (focus === "diplomacy") {
+          military.doctrine =
+            military.doctrine === "aggressive" ? "balanced" : military.doctrine;
+        }
+
+        military.army = army;
+
+        let cityCount = faction.cityCount ?? 3;
+        let townCount = faction.townCount ?? 12;
+        let nextPopulation = population;
+
+        if (focus === "cities" && nextTick % 24 === 0 && faction.treasury > 200) {
+          cityCount += 1;
+          townCount += 2;
+          nextPopulation += Math.max(25, Math.round(population * 0.00008));
+        } else if (!faction.controlledBy) {
+          nextPopulation += Math.max(
+            1,
+            Math.round(population * (focus === "economy" ? 0.000035 : 0.00002))
+          );
+        }
+
         return {
           ...faction,
           effects,
+          population: nextPopulation,
+          cityCount,
+          townCount,
+          military,
           relations: { ...faction.relations },
-          treasury: faction.treasury + 2 * modifiers.income,
+          treasury: Math.max(0, faction.treasury + baseIncome),
           stability: Math.max(
             0,
-            Math.min(100, faction.stability + modifiers.morale * 0.015)
+            Math.min(
+              100,
+              faction.stability +
+                modifiers.morale * 0.015 +
+                (focus === "diplomacy" ? 0.025 : 0) +
+                (focus === "cities" ? 0.02 : 0)
+            )
           ),
-          army: Math.min(
-            500,
-            faction.army +
-              (faction.controlledBy
-                ? 0
-                : 0.12 * Math.max(0.35, 1 + modifiers.morale / 100))
-          )
+          army
         };
       });
+
+      // Territorial integration can deliberately move citizens into newly
+      // conquered lands. This raises long-term control but costs population and
+      // money in the homeland.
+      for (const nation of nextFactions) {
+        if (nation.controlledBy || nation.focus !== "integration") continue;
+        const subjects = nextFactions.filter(
+          (candidate) => candidate.controlledBy === nation.id
+        );
+        if (!subjects.length) continue;
+
+        const policy = nation.integrationPolicy ?? "balanced";
+        const policyRate =
+          policy === "settler" ? 0.00006 : policy === "balanced" ? 0.00003 : 0.000012;
+
+        for (const subject of subjects.slice(0, 3)) {
+          const migrants = Math.max(
+            20,
+            Math.min(
+              5_000,
+              Math.round((nation.population ?? 100_000) * policyRate)
+            )
+          );
+          nation.population = Math.max(2, (nation.population ?? 2) - migrants);
+          subject.population = (subject.population ?? 2) + migrants;
+          subject.integrationProgress = Math.min(
+            100,
+            (subject.integrationProgress ?? 25) +
+              (policy === "settler" ? 0.5 : policy === "balanced" ? 0.28 : 0.12)
+          );
+          nation.treasury = Math.max(0, nation.treasury - migrants * 0.02);
+
+          if (nextTick % 30 === 0) {
+            subject.townCount = (subject.townCount ?? 0) + 1;
+            if ((subject.integrationProgress ?? 0) > 70 && nextTick % 60 === 0) {
+              subject.cityCount = (subject.cityCount ?? 0) + 1;
+            }
+            governanceEvents.push(
+              `${nation.name} moved ${migrants.toLocaleString()} settlers into ${subject.name}; integration is now ${Math.round(subject.integrationProgress ?? 0)}%.`
+            );
+          }
+        }
+      }
 
       const byId = new Map(nextFactions.map((faction) => [faction.id, faction]));
       const warEvents: string[] = [];
       const processed = new Set<string>();
+
+      // Organic diplomacy remains active even during larger scenarios. Only a
+      // small number of relations change at once so the whole planet does not
+      // instantly collapse into universal war.
+      if (nextTick % 8 === 0) {
+        const sovereign = nextFactions.filter((faction) => !faction.controlledBy);
+        if (sovereign.length > 1) {
+          const actor =
+            sovereign[
+              Math.abs(Math.floor(nextTick / 8 + state.seed)) % sovereign.length
+            ];
+          const nearby = nearestNations(actor, sovereign, 10);
+          const target =
+            nearby[
+              Math.floor(
+                deterministicRoll(actor.id + ":diplomacy", nextTick) *
+                  Math.max(1, nearby.length)
+              )
+            ];
+
+          if (target) {
+            const relation = actor.relations[target.id] ?? "neutral";
+            const roll = deterministicRoll(
+              `${actor.id}:${target.id}:${state.conflictScenario}`,
+              nextTick
+            );
+            const distance = geographicDistance(actor, target);
+            const diplomacyBonus =
+              actor.focus === "diplomacy" || target.focus === "diplomacy"
+                ? 0.16
+                : 0;
+            const militaryPressure =
+              actor.focus === "military" ? 0.1 : 0;
+            const scenarioPressure =
+              state.conflictScenario === "world-war"
+                ? 0.12
+                : state.conflictScenario === "regional-war"
+                  ? 0.05
+                  : 0;
+
+            if (
+              relation === "neutral" &&
+              roll < 0.28 * eraConfig.diplomacyRate + diplomacyBonus
+            ) {
+              actor.relations[target.id] = "allied";
+              target.relations[actor.id] = "allied";
+              const allianceName = choose(
+                state.catalog.allianceNames,
+                "Mutual Defense Pact",
+                roll
+              );
+              actor.allianceName = actor.allianceName ?? allianceName;
+              target.allianceName = target.allianceName ?? allianceName;
+              diplomacyEvents.push(
+                `${actor.name} and ${target.name} formed the ${allianceName}.`
+              );
+            } else if (
+              relation === "neutral" &&
+              distance < 48 &&
+              roll >
+                0.91 -
+                  militaryPressure -
+                  scenarioPressure +
+                  diplomacyBonus * 0.5
+            ) {
+              actor.relations[target.id] = "war";
+              target.relations[actor.id] = "war";
+              diplomacyEvents.push(
+                `${actor.name} entered a new war with nearby ${target.name}.`
+              );
+
+              const supportingAlly = nearestNations(actor, sovereign, 16).find(
+                (candidate) =>
+                  candidate.relations[actor.id] === "allied" &&
+                  candidate.id !== target.id &&
+                  deterministicRoll(candidate.id + target.id, nextTick) > 0.45
+              );
+              if (supportingAlly) {
+                supportingAlly.relations[target.id] = "war";
+                target.relations[supportingAlly.id] = "war";
+                diplomacyEvents.push(
+                  `${supportingAlly.name} entered the war in support of ${actor.name}.`
+                );
+              }
+            } else if (relation === "allied" && roll > 0.985) {
+              actor.relations[target.id] = "neutral";
+              target.relations[actor.id] = "neutral";
+              diplomacyEvents.push(
+                `${actor.name} and ${target.name} ended their alliance.`
+              );
+            } else if (relation === "war" && roll < 0.045 + diplomacyBonus) {
+              actor.relations[target.id] = "neutral";
+              target.relations[actor.id] = "neutral";
+              diplomacyEvents.push(
+                `${actor.name} and ${target.name} agreed to peace.`
+              );
+            }
+          }
+        }
+      }
 
       for (const faction of nextFactions) {
         const warTargetId = Object.entries(faction.relations).find(([, relation]) => relation === "war")?.[0];
