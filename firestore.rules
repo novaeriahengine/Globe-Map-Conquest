@@ -31,8 +31,8 @@ service cloud.firestore {
 
     match /catalogs/{catalogId} {
       allow read: if true;
-      allow create, update: if signedIn();
-      allow delete: if false;
+      allow create: if signedIn();
+      allow update, delete: if false;
     }
   }
 }
