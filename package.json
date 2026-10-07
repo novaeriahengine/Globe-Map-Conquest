@@ -4,9 +4,12 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc -b && vite build",
-    "preview": "vite preview"
+    "dev": "concurrently -k \"npm:dev:server\" \"npm:dev:web\"",
+    "dev:web": "vite",
+    "dev:server": "tsx server/index.ts",
+    "build": "tsc -b && vite build && tsc -p server/tsconfig.json",
+    "preview": "vite preview",
+    "start:server": "node dist-server/index.js"
   },
   "dependencies": {
     "@react-three/drei": "^9.121.4",
@@ -17,7 +20,8 @@
     "topojson-client": "^3.1.0",
     "world-atlas": "^2.0.2",
     "world-countries": "^5.0.0",
-    "zustand": "^5.0.3"
+    "zustand": "^5.0.3",
+    "ws": "^8.18.0"
   },
   "devDependencies": {
     "@types/react": "^18.3.12",
@@ -26,6 +30,10 @@
     "@types/topojson-client": "^3.1.5",
     "@vitejs/plugin-react": "^4.3.4",
     "typescript": "^5.7.2",
-    "vite": "^6.0.1"
+    "vite": "^6.0.1",
+    "@types/node": "^22.10.2",
+    "@types/ws": "^8.5.13",
+    "concurrently": "^9.1.0",
+    "tsx": "^4.19.2"
   }
 }
