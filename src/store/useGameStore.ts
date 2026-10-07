@@ -991,6 +991,11 @@ export const useGameStore = create<GameStore>((set, get) => {
         traits: [...npc.traits],
         stats: { ...npc.stats }
       }));
+      let civilizations = state.civilizations.map((civilization) => ({
+        ...civilization,
+        legacyNames: [...civilization.legacyNames],
+        history: [...civilization.history]
+      }));
 
       const nextFactions = state.factions.map((faction) => {
         const modifiers = nationModifiers(faction);
@@ -1148,34 +1153,271 @@ export const useGameStore = create<GameStore>((set, get) => {
             attackerAlive > 0
           ) {
             defender.controlledBy = attacker.controlledBy ?? attacker.id;
+            defender.occupationStartedTick = state.tick + 1;
             defender.stability = 30;
             defender.army = 12;
             defender.relations[attacker.id] = "neutral";
             attacker.relations[defender.id] = "neutral";
-            warEvents.push(`${attacker.name} conquered ${defender.name}.`);
+            civilizations = civilizations.map((civilization) =>
+              civilization.id === defender.civilizationId
+                ? {
+                    ...civilization,
+                    extinctionTick: state.tick + 1,
+                    history: [
+                      ...civilization.history,
+                      `${defender.name} lost sovereignty to ${attacker.name} at tick ${state.tick + 1}; its people retained their ${civilization.adjective} identity.`
+                    ].slice(-160)
+                  }
+                : civilization
+            );
+            warEvents.push(
+              `${attacker.name} conquered ${defender.name}. The ${civilizations.find((item) => item.id === defender.civilizationId)?.adjective ?? defender.name} civilization survived the fall.`
+            );
           } else if (
             (attacker.army <= 1 || attackerAlive === 0) &&
             defender.army > attacker.army &&
             defenderAlive > 0
           ) {
             attacker.controlledBy = defender.controlledBy ?? defender.id;
+            attacker.occupationStartedTick = state.tick + 1;
             attacker.stability = 30;
             attacker.army = 12;
             attacker.relations[defender.id] = "neutral";
             defender.relations[attacker.id] = "neutral";
-            warEvents.push(`${defender.name} conquered ${attacker.name}.`);
+            civilizations = civilizations.map((civilization) =>
+              civilization.id === attacker.civilizationId
+                ? {
+                    ...civilization,
+                    extinctionTick: state.tick + 1,
+                    history: [
+                      ...civilization.history,
+                      `${attacker.name} lost sovereignty to ${defender.name} at tick ${state.tick + 1}; its identity continued through civilians and descendants.`
+                    ].slice(-160)
+                  }
+                : civilization
+            );
+            warEvents.push(
+              `${defender.name} conquered ${attacker.name}, but its old civilization remains alive.`
+            );
           }
         }
       }
 
-      const progress = questProgress(state.quests, nextFactions, state.territories);
+      const nextTick = state.tick + 1;
+      const revivalEvents: string[] = [];
+      const nextTerritories = [...state.territories];
+
+      // Occupation does not erase a people. Loyal civilians keep their civilization
+      // identity and can eventually restore the old country.
+      for (const occupied of nextFactions) {
+        if (!occupied.controlledBy || occupied.occupationStartedTick == null) continue;
+
+        const loyalPeople = mutableNpcs.filter(
+          (npc) =>
+            npc.state !== "dead" &&
+            npc.civilizationId === occupied.civilizationId &&
+            npc.loyalty >= 58
+        );
+
+        for (const person of loyalPeople) {
+          person.loyalty = Math.min(100, person.loyalty + 0.08);
+        }
+
+        const elapsed = nextTick - occupied.occupationStartedTick;
+        const resistance =
+          loyalPeople.reduce((sum, npc) => sum + npc.loyalty, 0) /
+            Math.max(1, loyalPeople.length) +
+          loyalPeople.length * 4 +
+          (100 - occupied.stability) * 0.35;
+
+        const clock =
+          (nextTick +
+            occupied.id.length * 11 +
+            (occupied.id.charCodeAt(0) || 0)) %
+          47;
+
+        if (elapsed >= 70 && loyalPeople.length >= 2 && resistance >= 82 && clock === 0) {
+          const controllerId = occupied.controlledBy;
+          const controller = byId.get(controllerId);
+          occupied.controlledBy = null;
+          occupied.occupationStartedTick = null;
+          occupied.revivalCount = (occupied.revivalCount ?? 0) + 1;
+          occupied.army = Math.max(34, loyalPeople.length * 7);
+          occupied.stability = 58;
+          occupied.relations[controllerId] = "war";
+          if (controller) controller.relations[occupied.id] = "war";
+
+          civilizations = civilizations.map((civilization) =>
+            civilization.id === occupied.civilizationId
+              ? {
+                  ...civilization,
+                  extinctionTick: null,
+                  revivalCount: civilization.revivalCount + 1,
+                  history: [
+                    ...civilization.history,
+                    `${occupied.name} restored its homeland at tick ${nextTick} after ${elapsed} ticks of occupation.`
+                  ].slice(-160)
+                }
+              : civilization
+          );
+
+          revivalEvents.push(
+            `${occupied.name} returned after ${elapsed} ticks under foreign rule. Loyal civilians rebuilt the state.`
+          );
+        }
+      }
+
+      // If the homeland stays occupied for generations, a civilization may found a
+      // successor state somewhere else without losing its old historical identity.
+      const successorFactions: Faction[] = [];
+      for (const civilization of civilizations) {
+        const activeState = nextFactions.some(
+          (faction) =>
+            faction.civilizationId === civilization.id && !faction.controlledBy
+        );
+        if (activeState) continue;
+
+        const occupiedStates = nextFactions.filter(
+          (faction) =>
+            faction.civilizationId === civilization.id && Boolean(faction.controlledBy)
+        );
+        if (!occupiedStates.length) continue;
+
+        const oldestOccupation = Math.min(
+          ...occupiedStates.map((faction) => faction.occupationStartedTick ?? nextTick)
+        );
+        const elapsed = nextTick - oldestOccupation;
+        const diasporaClock =
+          (nextTick + civilization.name.length * 13) % 131;
+
+        if (elapsed < 180 || diasporaClock !== 0) continue;
+
+        const survivors = mutableNpcs
+          .filter(
+            (npc) =>
+              npc.state !== "dead" &&
+              npc.civilizationId === civilization.id &&
+              npc.loyalty >= 62
+          )
+          .sort((a, b) => b.loyalty - a.loyalty);
+
+        const anchor = survivors[0];
+        const direction = civilization.revivalCount % 2 === 0 ? 1 : -1;
+        const lat = Math.max(
+          -72,
+          Math.min(72, (anchor?.lat ?? civilization.homeland[0]) + 10 * direction)
+        );
+        const lon =
+          (((anchor?.lon ?? civilization.homeland[1]) +
+            18 +
+            civilization.revivalCount * 7 +
+            540) %
+            360) -
+          180;
+
+        const factionId = makeId("successor");
+        const successorName =
+          civilization.revivalCount % 2 === 0
+            ? `New ${civilization.name}`
+            : civilization.name;
+
+        const successor: Faction = {
+          id: factionId,
+          name: successorName,
+          cca2: "--",
+          cca3: "NEW",
+          emoji: "🏳️",
+          capital: `${successorName} Settlement`,
+          lat,
+          lon,
+          color: civilization.color,
+          accentColor: seededColor(factionId + "-accent"),
+          army: Math.max(28, survivors.length * 6),
+          treasury: 320,
+          stability: 64,
+          controlledBy: null,
+          rulerName: null,
+          flagPresetId: civilization.flagPresetId,
+          allianceName: null,
+          relations: {},
+          effects: [],
+          civilizationId: civilization.id,
+          occupationStartedTick: null,
+          revivalCount: civilization.revivalCount + 1
+        };
+
+        successorFactions.push(successor);
+
+        const territoryId = makeId("diaspora");
+        nextTerritories.push({
+          id: territoryId,
+          name: `${successorName} Territory`,
+          parentFactionId: occupiedStates[0]?.id ?? null,
+          ownerFactionId: factionId,
+          color: civilization.color,
+          points: [
+            [lat - 3.5, lon - 4.5],
+            [lat - 3.5, lon + 4.5],
+            [lat + 3.5, lon + 4.5],
+            [lat + 3.5, lon - 4.5]
+          ],
+          createdAt: Date.now(),
+          genericName: false
+        });
+
+        for (const person of survivors.slice(0, Math.max(2, Math.min(5, survivors.length)))) {
+          person.factionId = factionId;
+          person.lat = lat + (Math.random() - 0.5) * 1.5;
+          person.lon = lon + (Math.random() - 0.5) * 1.5;
+          person.state = "idle";
+          person.targetFactionId = null;
+        }
+
+        civilizations = civilizations.map((item) =>
+          item.id === civilization.id
+            ? {
+                ...item,
+                extinctionTick: null,
+                revivalCount: item.revivalCount + 1,
+                legacyNames: Array.from(
+                  new Set([...item.legacyNames, successorName])
+                ).slice(-20),
+                history: [
+                  ...item.history,
+                  `${successorName} was founded in a new land at tick ${nextTick}, continuing the older ${item.adjective} civilization.`
+                ].slice(-160)
+              }
+            : item
+        );
+
+        revivalEvents.push(
+          `${successorName} was founded in a new land by descendants of ${civilization.name}.`
+        );
+      }
+
+      if (successorFactions.length) {
+        nextFactions.push(...successorFactions);
+        for (const successor of successorFactions) {
+          npcs = ensureSquad(mutableNpcs, successor, state.catalog, 5);
+          for (const npc of npcs) {
+            if (!mutableNpcs.some((existing) => existing.id === npc.id)) {
+              mutableNpcs.push(npc);
+            }
+          }
+        }
+      }
+
+      const progress = questProgress(state.quests, nextFactions, nextTerritories);
 
       return {
         factions: nextFactions,
+        civilizations,
+        territories: nextTerritories,
         npcs: mutableNpcs,
         quests: progress.quests,
         tick: state.tick + 1,
         logs: [
+          ...revivalEvents,
           ...warEvents,
           ...progress.newlyCompleted.map((title) => `Quest completed: ${title}.`),
           ...state.logs
@@ -1210,7 +1452,7 @@ export const useGameStore = create<GameStore>((set, get) => {
     set((state) => ({
       worldName: snapshot.worldName,
       worldMode: snapshot.worldMode,
-      viewMode: snapshot.viewMode ?? "globe3d",
+      viewMode: snapshot.viewMode ?? "map2d",
       supportedFactionId: snapshot.supportedFactionId ?? null,
       seed: snapshot.seed,
       objects: snapshot.objects,
