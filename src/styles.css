@@ -1621,3 +1621,163 @@ button {
     bottom: 8px;
   }
 }
+
+
+.viewport-mode-switch {
+  position: absolute;
+  z-index: 25;
+  top: 12px;
+  left: 50%;
+  display: flex;
+  gap: 5px;
+  transform: translateX(-50%);
+  padding: 5px;
+  border: 1px solid rgba(119, 151, 184, .38);
+  border-radius: 11px;
+  background: rgba(8, 14, 22, .9);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, .32);
+  backdrop-filter: blur(10px);
+}
+
+.viewport-mode-switch button {
+  min-width: 116px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  padding: 9px 12px;
+  background: transparent;
+  color: #8fa1b5;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: .04em;
+  cursor: pointer;
+}
+
+.viewport-mode-switch button.active {
+  border-color: #4d94d5;
+  background: #193654;
+  color: #f3f9ff;
+  box-shadow: inset 0 0 0 1px rgba(96, 171, 240, .18);
+}
+
+.civilization-card {
+  padding: 9px;
+  border: 1px solid #3a4654;
+  border-radius: 8px;
+  background:
+    linear-gradient(150deg, rgba(255,255,255,.018), transparent),
+    #111820;
+}
+
+.civilization-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.civilization-heading strong,
+.civilization-heading span {
+  display: block;
+}
+
+.civilization-heading strong {
+  font-size: 11px;
+}
+
+.civilization-heading > div > span {
+  margin-top: 2px;
+  color: #74869b;
+  font-size: 8px;
+}
+
+.civ-status {
+  border-radius: 999px;
+  padding: 3px 6px;
+  font-size: 7px;
+  font-weight: 900;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.civ-status.active {
+  border: 1px solid #2e664e;
+  background: #153326;
+  color: #82dfaf;
+}
+
+.civ-status.occupied {
+  border: 1px solid #755331;
+  background: #352515;
+  color: #f0bd75;
+}
+
+.civilization-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+  margin-top: 8px;
+}
+
+.civilization-stats > div {
+  padding: 6px 4px;
+  border: 1px solid #263340;
+  border-radius: 6px;
+  background: #0d141c;
+  text-align: center;
+}
+
+.civilization-stats span,
+.civilization-stats strong {
+  display: block;
+}
+
+.civilization-stats span {
+  color: #6d8095;
+  font-size: 7px;
+  text-transform: uppercase;
+}
+
+.civilization-stats strong {
+  margin-top: 2px;
+  font-size: 10px;
+}
+
+.civilization-card p {
+  margin: 8px 0;
+  color: #7a8ca0;
+  font-size: 9px;
+  line-height: 1.45;
+}
+
+.civilization-history {
+  display: grid;
+  gap: 4px;
+}
+
+.civilization-history > div {
+  padding: 5px 6px;
+  border-left: 2px solid #8067bb;
+  background: #131a24;
+  color: #8798aa;
+  font-size: 8px;
+  line-height: 1.4;
+}
+
+@media (max-width: 760px) {
+  .viewport-mode-switch {
+    top: 8px;
+    width: calc(100% - 18px);
+    justify-content: center;
+  }
+
+  .viewport-mode-switch button {
+    flex: 1;
+    min-width: 0;
+    padding: 10px 7px;
+    font-size: 9px;
+  }
+
+  .civilization-stats {
+    grid-template-columns: 1fr 1fr 1fr;
+  }
+}
