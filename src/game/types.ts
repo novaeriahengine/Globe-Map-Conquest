@@ -1,8 +1,11 @@
 export type Vec3 = [number, number, number];
-export type WorldMode = "earth" | "procedural";
-export type EditorTool = "select" | "move" | "rotate" | "scale";
+export type LatLon = [number, number];
+
+export type WorldMode = "earth" | "procedural" | "sandbox";
+export type EditorTool = "select" | "move" | "rotate" | "scale" | "territory";
 export type ObjectKind = "block" | "sphere" | "cylinder" | "spawn" | "king";
 export type Relation = "neutral" | "allied" | "war";
+export type NpcState = "idle" | "marching" | "fighting" | "dead";
 
 export type FlagPresetId =
   | "ocean-tricolor"
@@ -10,7 +13,13 @@ export type FlagPresetId =
   | "royal-cross"
   | "forest-band"
   | "midnight-star"
-  | "republic";
+  | "republic"
+  | "golden-eagle"
+  | "island-wave"
+  | "crimson-saltire"
+  | "emerald-sun"
+  | "sky-chevron"
+  | "imperial-band";
 
 export interface SceneObject {
   id: string;
@@ -34,22 +43,104 @@ export interface Faction {
   lat: number;
   lon: number;
   color: string;
+  accentColor: string;
   army: number;
   treasury: number;
   stability: number;
   controlledBy: string | null;
   rulerName: string | null;
   flagPresetId: FlagPresetId;
+  allianceName?: string | null;
   relations: Record<string, Relation>;
 }
 
+export interface TerritoryPatch {
+  id: string;
+  name: string;
+  parentFactionId: string | null;
+  ownerFactionId: string | null;
+  color: string;
+  points: LatLon[];
+  createdAt: number;
+  genericName: boolean;
+}
+
+export interface TraitStats {
+  aggression: number;
+  courage: number;
+  discipline: number;
+  speed: number;
+  luck: number;
+}
+
+export interface NpcUnit {
+  id: string;
+  factionId: string;
+  name: string;
+  species: string;
+  traits: string[];
+  stats: TraitStats;
+  hp: number;
+  maxHp: number;
+  attack: number;
+  defense: number;
+  lat: number;
+  lon: number;
+  targetFactionId?: string | null;
+  state: NpcState;
+  kills: number;
+}
+
+export type QuestType =
+  | "alliance"
+  | "war"
+  | "conquest"
+  | "territory"
+  | "world-domination"
+  | "survival";
+
+export interface Quest {
+  id: string;
+  title: string;
+  description: string;
+  type: QuestType;
+  target: number;
+  progress: number;
+  completed: boolean;
+  reward: string;
+}
+
+export interface NameCatalog {
+  countryNames: string[];
+  territoryNames: string[];
+  allianceNames: string[];
+  species: string[];
+  npcFirstNames: string[];
+  npcLastNames: string[];
+  traitNames: string[];
+}
+
 export interface SavedWorld {
-  version: 1;
+  version: 2;
   worldName: string;
   worldMode: WorldMode;
   seed: number;
   objects: SceneObject[];
   factions: Faction[];
+  territories: TerritoryPatch[];
+  npcs: NpcUnit[];
+  quests: Quest[];
+  logs: string[];
+  tick: number;
+}
+
+export interface LegacySavedWorldV1 {
+  version: 1;
+  worldName: string;
+  worldMode: "earth" | "procedural";
+  seed: number;
+  objects: SceneObject[];
+  factions: Array<Omit<Faction, "accentColor">>;
   logs: string[];
   tick: number;
 }
