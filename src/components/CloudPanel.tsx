@@ -34,6 +34,18 @@ export function CloudPanel() {
     localStorage.setItem("gmc-cloud-autosave", autosave ? "on" : "off");
     if (!autosave) return;
 
+    timer.current = window.setTimeout(() => {
+      setStatus("Saving…");
+      saveWorldToCloud(worldId, useGameStore.getState().exportWorld())
+        .then((id) => {
+          setWorldId(id);
+          setStatus("Saved to Firestore");
+        })
+        .catch((error) => {
+          setStatus(error instanceof Error ? error.message : "Firestore save failed");
+        });
+    }, 700);
+
     const unsubscribe = useGameStore.subscribe((state, previous) => {
       const changed =
         state.worldName !== previous.worldName ||
