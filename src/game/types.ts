@@ -3,6 +3,18 @@ export type LatLon = [number, number];
 
 export type WorldMode = "earth" | "procedural" | "sandbox";
 export type ViewMode = "globe3d" | "map2d";
+export type WorkspaceMode = "play" | "god" | "editor" | "player";
+export type Era = "ancient" | "medieval" | "industrial" | "modern" | "future";
+export type ConflictScenario = "organic" | "regional-war" | "world-war";
+export type NationFocus =
+  | "balanced"
+  | "military"
+  | "economy"
+  | "integration"
+  | "cities"
+  | "diplomacy"
+  | "naval";
+export type IntegrationPolicy = "local" | "balanced" | "settler";
 export type EditorTool = "select" | "move" | "rotate" | "scale" | "territory";
 export type ObjectKind = "block" | "sphere" | "cylinder" | "spawn" | "king";
 export type Relation = "neutral" | "allied" | "war";
@@ -67,6 +79,14 @@ export interface CivilizationRecord {
   history: string[];
 }
 
+export interface MilitaryProfile {
+  army: number;
+  navy: number;
+  airForce: number;
+  reserves: number;
+  doctrine: "defensive" | "balanced" | "aggressive" | "maneuver" | "naval";
+}
+
 export interface Faction {
   id: string;
   name: string;
@@ -91,6 +111,13 @@ export interface Faction {
   civilizationId: string;
   occupationStartedTick?: number | null;
   revivalCount?: number;
+  focus?: NationFocus;
+  integrationPolicy?: IntegrationPolicy;
+  population?: number;
+  cityCount?: number;
+  townCount?: number;
+  integrationProgress?: number;
+  military?: MilitaryProfile;
 }
 
 export interface TerritoryPatch {
@@ -120,6 +147,15 @@ export interface NpcUnit {
   name: string;
   species: string;
   traits: string[];
+  nationality?: string;
+  tags?: string[];
+  sex?: "female" | "male";
+  birthTick?: number;
+  generation?: number;
+  parentIds?: string[];
+  partnerId?: string | null;
+  childIds?: string[];
+  populationWeight?: number;
   stats: TraitStats;
   hp: number;
   maxHp: number;
@@ -167,6 +203,10 @@ export interface SavedWorld {
   worldMode: WorldMode;
   viewMode?: ViewMode;
   supportedFactionId?: string | null;
+  workspaceMode?: WorkspaceMode;
+  era?: Era;
+  conflictScenario?: ConflictScenario;
+  populationSeed?: number;
   seed: number;
   objects: SceneObject[];
   factions: Faction[];

@@ -2,7 +2,6 @@ import { useGameStore } from "../store/useGameStore";
 
 export function QuestPanel() {
   const quests = useGameStore((state) => state.quests);
-  const startWorldWar = useGameStore((state) => state.startWorldWar);
 
   return (
     <section className="panel quest-panel">
@@ -15,21 +14,6 @@ export function QuestPanel() {
           {quests.filter((quest) => quest.completed).length}/{quests.length}
         </span>
       </div>
-
-      <button
-        className="button danger full world-war-button"
-        onClick={() => {
-          if (
-            window.confirm(
-              "Start a 40-nation world war? This creates two coalitions, spawns living NPC armies and starts the simulation."
-            )
-          ) {
-            startWorldWar();
-          }
-        }}
-      >
-        ⚔ Start World War
-      </button>
 
       <div className="quest-list">
         {quests.map((quest) => {

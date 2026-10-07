@@ -4,7 +4,9 @@ import { createInitialFactions } from "../game/countries";
 import { latLonToXYZ, seededColor } from "../game/geo";
 import type {
   CivilizationRecord,
+  ConflictScenario,
   EditorTool,
+  Era,
   Faction,
   FlagPresetId,
   LatLon,
@@ -12,6 +14,7 @@ import type {
   NameCatalog,
   NationEffect,
   NationEffectKind,
+  NationFocus,
   NpcUnit,
   ObjectKind,
   Quest,
@@ -22,6 +25,7 @@ import type {
   TraitStats,
   Vec3,
   ViewMode,
+  WorkspaceMode,
   WorldMode
 } from "../game/types";
 
@@ -30,6 +34,10 @@ interface GameStore {
   worldMode: WorldMode;
   viewMode: ViewMode;
   supportedFactionId: string | null;
+  workspaceMode: WorkspaceMode;
+  era: Era;
+  conflictScenario: ConflictScenario;
+  populationSeed: number;
   seed: number;
   playMode: boolean;
   tool: EditorTool;
@@ -51,9 +59,22 @@ interface GameStore {
   setWorldName: (name: string) => void;
   setWorldMode: (mode: WorldMode) => void;
   setViewMode: (mode: ViewMode) => void;
+  setWorkspaceMode: (mode: WorkspaceMode) => void;
+  setEra: (era: Era) => void;
+  setConflictScenario: (scenario: ConflictScenario) => void;
   supportFaction: (factionId: string | null) => void;
   applyNationEffect: (factionId: string, kind: NationEffectKind) => void;
   clearNationEffects: (factionId: string) => void;
+  setNationFocus: (factionId: string, focus: NationFocus) => void;
+  setIntegrationPolicy: (
+    factionId: string,
+    policy: "local" | "balanced" | "settler"
+  ) => void;
+  seedPopulation: (
+    factionId: string,
+    count: number,
+    territoryId?: string | null
+  ) => void;
   adjustNation: (
     factionId: string,
     field: "army" | "treasury" | "stability",
@@ -90,6 +111,7 @@ interface GameStore {
   deleteTerritory: (id: string) => void;
   promoteTerritoryToFaction: (id: string, name?: string) => void;
   startWorldWar: () => void;
+  startConflictScenario: (scenario: ConflictScenario) => void;
   simulateTick: () => void;
   exportWorld: () => SavedWorld;
   importWorld: (snapshot: SavedWorld | LegacySavedWorldV1, source?: string) => void;
@@ -264,13 +286,261 @@ function civilizationsFromFactions(
 }
 
 function normalizeFactionCivilization(faction: Faction): Faction {
+  const activeArmy =
+    faction.army < 1_000 ? Math.round(faction.army * 1_000) : faction.army;
+  const population =
+    faction.population ??
+    Math.max(100_000, Math.round(activeArmy * 180 + faction.treasury * 90));
+
   return {
     ...faction,
+    army: activeArmy,
     effects: faction.effects ?? [],
     civilizationId: faction.civilizationId || `civ-${faction.id}`,
     occupationStartedTick: faction.occupationStartedTick ?? null,
-    revivalCount: faction.revivalCount ?? 0
+    revivalCount: faction.revivalCount ?? 0,
+    focus: faction.focus ?? "balanced",
+    integrationPolicy: faction.integrationPolicy ?? "balanced",
+    population,
+    cityCount: faction.cityCount ?? Math.max(2, Math.round(population / 2_500_000)),
+    townCount: faction.townCount ?? Math.max(8, Math.round(population / 220_000)),
+    integrationProgress: faction.integrationProgress ?? 55,
+    military:
+      faction.military ?? {
+        army: activeArmy,
+        navy: Math.round(activeArmy * 0.11),
+        airForce: Math.round(activeArmy * 0.08),
+        reserves: Math.round(activeArmy * 1.7),
+        doctrine: "balanced"
+      }
   };
+}
+
+function eraSettings(era: Era) {
+  switch (era) {
+    case "ancient":
+      return {
+        movement: 0.28,
+        battleRate: 0.0018,
+        diplomacyRate: 0.65,
+        navalPower: 0.35,
+        airPower: 0,
+        birthEvery: 30
+      };
+    case "medieval":
+      return {
+        movement: 0.36,
+        battleRate: 0.0024,
+        diplomacyRate: 0.72,
+        navalPower: 0.5,
+        airPower: 0,
+        birthEvery: 28
+      };
+    case "industrial":
+      return {
+        movement: 0.62,
+        battleRate: 0.0035,
+        diplomacyRate: 0.85,
+        navalPower: 0.82,
+        airPower: 0.28,
+        birthEvery: 24
+      };
+    case "future":
+      return {
+        movement: 1.28,
+        battleRate: 0.0062,
+        diplomacyRate: 1.1,
+        navalPower: 1.15,
+        airPower: 1.35,
+        birthEvery: 18
+      };
+    case "modern":
+    default:
+      return {
+        movement: 1,
+        battleRate: 0.0048,
+        diplomacyRate: 1,
+        navalPower: 1,
+        airPower: 1,
+        birthEvery: 20
+      };
+  }
+}
+
+function deterministicRoll(seed: string, tick: number) {
+  let hash = 2166136261 ^ tick;
+  for (let i = 0; i < seed.length; i += 1) {
+    hash ^= seed.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return ((hash >>> 0) % 10_000) / 10_000;
+}
+
+function geographicDistance(a: Faction, b: Faction) {
+  return angleDistance([a.lat, a.lon], [b.lat, b.lon]);
+}
+
+function nearestNations(
+  origin: Faction,
+  factions: Faction[],
+  limit = 8
+) {
+  return factions
+    .filter(
+      (candidate) =>
+        candidate.id !== origin.id &&
+        !candidate.controlledBy
+    )
+    .sort(
+      (a, b) =>
+        geographicDistance(origin, a) - geographicDistance(origin, b)
+    )
+    .slice(0, limit);
+}
+
+function focusLabel(focus: NationFocus) {
+  const labels: Record<NationFocus, string> = {
+    balanced: "Balanced Development",
+    military: "Military Expansion",
+    economy: "Economic Growth",
+    integration: "Territorial Integration",
+    cities: "Cities & Infrastructure",
+    diplomacy: "Diplomacy",
+    naval: "Naval Power"
+  };
+  return labels[focus];
+}
+
+
+function proceduralLandValue(lat: number, lon: number, seed: number) {
+  return (
+    Math.sin((lon + seed * 0.01) * 0.075) +
+    Math.cos((lat - seed * 0.008) * 0.11) +
+    Math.sin((lon + lat) * 0.19 + seed * 0.003) * 0.55
+  );
+}
+
+function createProceduralFactions(
+  seed: number,
+  catalog: NameCatalog,
+  count: number
+): Faction[] {
+  const positions: LatLon[] = [];
+  let attempt = 0;
+
+  while (positions.length < count && attempt < count * 80) {
+    const t = ((attempt + 1) * 0.61803398875 + (seed % 997) / 997) % 1;
+    const u = ((attempt + 1) * 0.41421356237 + (seed % 577) / 577) % 1;
+    const lat = -62 + t * 124;
+    const lon = -178 + u * 356;
+    const terrain = proceduralLandValue(lat, lon, seed);
+    const separated = positions.every(
+      (point) => angleDistance(point, [lat, lon]) > 15
+    );
+
+    if (terrain > -0.08 && terrain < 1.25 && separated) {
+      positions.push([lat, lon]);
+    }
+    attempt += 1;
+  }
+
+  while (positions.length < count) {
+    const index = positions.length;
+    positions.push([
+      -45 + ((index * 37 + seed) % 90),
+      -170 + ((index * 71 + seed) % 340)
+    ]);
+  }
+
+  return positions.map(([lat, lon], index) => {
+    const name = choose(
+      catalog.countryNames,
+      `Kingdom ${index + 1}`,
+      ((index + 1) * 0.193 + (seed % 101) / 101) % 1
+    );
+    const id = `PROC-${index + 1}-${Math.abs(seed % 9999)}`;
+    const population = 100;
+    const army = 12;
+
+    return {
+      id,
+      name,
+      cca2: "--",
+      cca3: `P${String(index + 1).padStart(2, "0")}`,
+      emoji: "🏳️",
+      capital: `${name} Camp`,
+      lat,
+      lon,
+      color: seededColor(id),
+      accentColor: seededColor(id + "-accent"),
+      army,
+      treasury: 800,
+      stability: 72,
+      controlledBy: null,
+      rulerName: null,
+      flagPresetId: index % 2 === 0 ? "sunrise" : "forest-band",
+      allianceName: null,
+      relations: {},
+      effects: [],
+      civilizationId: `civ-${id}`,
+      occupationStartedTick: null,
+      revivalCount: 0,
+      focus: "balanced",
+      integrationPolicy: "balanced",
+      population,
+      cityCount: 1,
+      townCount: 1,
+      integrationProgress: 45,
+      military: {
+        army,
+        navy: 0,
+        airForce: 0,
+        reserves: 20,
+        doctrine: "balanced"
+      }
+    } as Faction;
+  });
+}
+
+function createProceduralTerritories(
+  factions: Faction[],
+  seed: number
+): TerritoryPatch[] {
+  return factions.map((faction, factionIndex) => {
+    const points: LatLon[] = [];
+    const vertices = 10;
+
+    for (let index = 0; index < vertices; index += 1) {
+      const angle = (index / vertices) * Math.PI * 2;
+      const baseRadius = 7 + ((factionIndex * 17 + index * 7 + seed) % 5);
+      const testLat = faction.lat + Math.sin(angle) * baseRadius;
+      const lonScale = Math.max(0.35, Math.cos((faction.lat * Math.PI) / 180));
+      const testLon = faction.lon + (Math.cos(angle) * baseRadius) / lonScale;
+      const terrain = proceduralLandValue(testLat, testLon, seed);
+      const boundaryPressure =
+        terrain > 1.0 ? 0.48 : terrain < -0.08 ? 0.38 : 1;
+
+      points.push([
+        faction.lat + Math.sin(angle) * baseRadius * boundaryPressure,
+        ((faction.lon +
+          (Math.cos(angle) * baseRadius * boundaryPressure) / lonScale +
+          540) %
+          360) -
+          180
+      ]);
+    }
+
+    return {
+      id: `region-${faction.id}`,
+      name: `${faction.name} Homeland`,
+      parentFactionId: faction.id,
+      ownerFactionId: faction.id,
+      color: faction.color,
+      points,
+      createdAt: Date.now() + factionIndex,
+      genericName: false
+    };
+  });
 }
 
 function traitStats(traits: string[]): TraitStats {
@@ -317,6 +587,9 @@ function makeNpc(
   const stats = traitStats(traits);
   const maxHp = 78 + Math.round(stats.courage * 0.42 + stats.discipline * 0.18);
 
+  const sex = ordinal % 2 === 0 ? "female" : "male";
+  const adultAge = 18 + Math.round(((seed * 97) % 1) * 24);
+
   return {
     id: makeId("npc"),
     factionId: faction.id,
@@ -325,6 +598,19 @@ function makeNpc(
     name: `${first} ${last}`,
     species: choose(catalog.species, "Human", (seed * 7.03 + 0.12) % 1),
     traits,
+    nationality: faction.name,
+    tags: [
+      faction.name,
+      civilizationAdjective(faction.name),
+      ordinal < 2 ? "Founder" : "Citizen"
+    ],
+    sex,
+    birthTick: -adultAge * 12,
+    generation: 0,
+    parentIds: [],
+    partnerId: null,
+    childIds: [],
+    populationWeight: 1,
     stats,
     hp: maxHp,
     maxHp,
@@ -336,6 +622,53 @@ function makeNpc(
     state: "idle",
     kills: 0
   };
+}
+
+function npcAgeYears(npc: NpcUnit, tick: number) {
+  return Math.max(0, Math.floor((tick - (npc.birthTick ?? -18 * 12)) / 12));
+}
+
+function makeChildNpc(
+  mother: NpcUnit,
+  father: NpcUnit,
+  faction: Faction,
+  catalog: NameCatalog,
+  tick: number
+): NpcUnit {
+  const ordinal = Math.abs(
+    Math.round(
+      deterministicRoll(`${mother.id}:${father.id}`, tick) * 100_000
+    )
+  );
+  const child = makeNpc(faction, catalog, ordinal);
+  const motherLast = mother.name.split(" ").slice(-1)[0] || faction.name;
+  const first = choose(
+    catalog.npcFirstNames,
+    "Child",
+    deterministicRoll(mother.id + father.id, tick)
+  );
+  child.name = `${first} ${motherLast}`;
+  child.birthTick = tick;
+  child.generation = Math.max(mother.generation ?? 0, father.generation ?? 0) + 1;
+  child.parentIds = [mother.id, father.id];
+  child.partnerId = null;
+  child.childIds = [];
+  child.tags = [
+    faction.name,
+    civilizationAdjective(faction.name),
+    "Born Citizen",
+    `Generation ${child.generation}`
+  ];
+  child.nationality = faction.name;
+  child.sex = ordinal % 2 === 0 ? "female" : "male";
+  child.populationWeight = 1;
+  child.lat = mother.lat;
+  child.lon = mother.lon;
+  child.attack *= 0.35;
+  child.defense *= 0.35;
+  child.state = "idle";
+
+  return child;
 }
 
 function ensureSquad(
@@ -437,15 +770,28 @@ function upgradeSnapshot(snapshot: SavedWorld | LegacySavedWorldV1): SavedWorld 
       ...snapshot,
       viewMode: snapshot.viewMode ?? "map2d",
       supportedFactionId: snapshot.supportedFactionId ?? null,
+      workspaceMode: snapshot.workspaceMode ?? "play",
+      era: snapshot.era ?? "modern",
+      conflictScenario: snapshot.conflictScenario ?? "organic",
+      populationSeed: snapshot.populationSeed ?? 100,
       factions,
       civilizations,
-      npcs: snapshot.npcs.map((npc) => {
+      npcs: snapshot.npcs.map((npc, index) => {
         const faction = factions.find((item) => item.id === npc.factionId);
         return {
           ...npc,
           civilizationId:
             npc.civilizationId ?? faction?.civilizationId ?? `civ-${npc.factionId}`,
-          loyalty: npc.loyalty ?? 70
+          loyalty: npc.loyalty ?? 70,
+          nationality: npc.nationality ?? faction?.name ?? "Unknown",
+          tags: npc.tags ?? [faction?.name ?? "Citizen"],
+          sex: npc.sex ?? (index % 2 === 0 ? "female" : "male"),
+          birthTick: npc.birthTick ?? snapshot.tick - (18 + (index % 24)) * 12,
+          generation: npc.generation ?? 0,
+          parentIds: npc.parentIds ?? [],
+          partnerId: npc.partnerId ?? null,
+          childIds: npc.childIds ?? [],
+          populationWeight: npc.populationWeight ?? 1
         };
       })
     };
@@ -466,6 +812,10 @@ function upgradeSnapshot(snapshot: SavedWorld | LegacySavedWorldV1): SavedWorld 
     worldMode: snapshot.worldMode,
     viewMode: "map2d",
     supportedFactionId: null,
+    workspaceMode: "play",
+    era: "modern",
+    conflictScenario: "organic",
+    populationSeed: 100,
     seed: snapshot.seed,
     objects: snapshot.objects,
     factions,
@@ -485,6 +835,10 @@ export const useGameStore = create<GameStore>((set, get) => {
   worldMode: "earth",
   viewMode: "map2d",
   supportedFactionId: null,
+  workspaceMode: "play",
+  era: "modern",
+  conflictScenario: "organic",
+  populationSeed: 100,
   seed: 48271,
   playMode: false,
   tool: "select",
@@ -520,6 +874,21 @@ export const useGameStore = create<GameStore>((set, get) => {
         ...state.logs
       ].slice(0, 120)
     })),
+
+  setWorkspaceMode: (workspaceMode) =>
+    set((state) => ({
+      workspaceMode,
+      logs: [`Workspace changed to ${workspaceMode} mode.`, ...state.logs].slice(0, 120)
+    })),
+
+  setEra: (era) =>
+    set((state) => ({
+      era,
+      logs: [`World era changed to ${era}.`, ...state.logs].slice(0, 120)
+    })),
+
+  setConflictScenario: (conflictScenario) =>
+    set({ conflictScenario }),
 
   supportFaction: (supportedFactionId) =>
     set((state) => ({
@@ -558,15 +927,117 @@ export const useGameStore = create<GameStore>((set, get) => {
       )
     })),
 
+  setNationFocus: (factionId, focus) =>
+    set((state) => ({
+      factions: state.factions.map((faction) =>
+        faction.id === factionId ? { ...faction, focus } : faction
+      ),
+      logs: [
+        `${state.factions.find((faction) => faction.id === factionId)?.name ?? "Nation"} is now prioritizing ${focusLabel(focus)}.`,
+        ...state.logs
+      ].slice(0, 120)
+    })),
+
+  setIntegrationPolicy: (factionId, integrationPolicy) =>
+    set((state) => ({
+      factions: state.factions.map((faction) =>
+        faction.id === factionId
+          ? { ...faction, integrationPolicy }
+          : faction
+      )
+    })),
+
+  seedPopulation: (factionId, rawCount, territoryId = null) =>
+    set((state) => {
+      const faction = state.factions.find((item) => item.id === factionId);
+      if (!faction) return state;
+
+      const territory = territoryId
+        ? state.territories.find((item) => item.id === territoryId)
+        : null;
+      const spawnPoint: LatLon =
+        territory && territory.points.length
+          ? [
+              territory.points.reduce((sum, point) => sum + point[0], 0) /
+                territory.points.length,
+              territory.points.reduce((sum, point) => sum + point[1], 0) /
+                territory.points.length
+            ]
+          : [faction.lat, faction.lon];
+
+      const count = Math.max(2, Math.min(10_000, Math.round(rawCount)));
+      const trackedCount = Math.min(count, 240);
+      const founders: NpcUnit[] = [];
+
+      for (let index = 0; index < trackedCount; index += 1) {
+        const npc = makeNpc(faction, state.catalog, index);
+        npc.populationWeight = count / trackedCount;
+        npc.lat = spawnPoint[0] + ((index % 7) - 3) * 0.08;
+        npc.lon = spawnPoint[1] + ((Math.floor(index / 7) % 7) - 3) * 0.08;
+        npc.tags = Array.from(
+          new Set([
+            ...(npc.tags ?? []),
+            "Founding Population",
+            territory?.name ?? faction.capital ?? faction.name
+          ])
+        );
+        founders.push(npc);
+      }
+
+      const activeArmy = Math.max(0, Math.round(count * 0.025));
+
+      return {
+        populationSeed: count,
+        npcs: [
+          ...state.npcs.filter((npc) => npc.factionId !== factionId),
+          ...founders
+        ],
+        factions: state.factions.map((item) =>
+          item.id === factionId
+            ? {
+                ...item,
+                population: count,
+                army: activeArmy,
+                military: {
+                  ...(item.military ?? {
+                    army: activeArmy,
+                    navy: 0,
+                    airForce: 0,
+                    reserves: 0,
+                    doctrine: "balanced"
+                  }),
+                  army: activeArmy,
+                  reserves: Math.max(activeArmy, Math.round(count * 0.06))
+                }
+              }
+            : item
+        ),
+        logs: [
+          `Seeded ${faction.name} with ${count.toLocaleString()} simulated people at ${territory?.name ?? faction.capital ?? faction.name}, represented by ${trackedCount} tracked founder NPCs.`,
+          ...state.logs
+        ].slice(0, 120)
+      };
+    }),
+
   adjustNation: (factionId, field, amount) =>
     set((state) => ({
       factions: state.factions.map((faction) => {
         if (faction.id !== factionId) return faction;
         if (field === "army") {
-          return { ...faction, army: Math.max(0, Math.min(500, faction.army + amount)) };
+          const army = Math.max(0, Math.min(5_000_000, faction.army + amount));
+          return {
+            ...faction,
+            army,
+            military: faction.military
+              ? { ...faction.military, army }
+              : faction.military
+          };
         }
         if (field === "treasury") {
-          return { ...faction, treasury: Math.max(0, faction.treasury + amount) };
+          return {
+            ...faction,
+            treasury: Math.max(0, faction.treasury + amount)
+          };
         }
         return {
           ...faction,
@@ -576,7 +1047,37 @@ export const useGameStore = create<GameStore>((set, get) => {
     })),
 
   createWorld: (worldMode, name) => {
-    const factions = createInitialFactions();
+    const worldSeed = Math.floor(Math.random() * 999_999_999);
+    const catalog = get().catalog;
+    const factions =
+      worldMode === "earth"
+        ? createInitialFactions()
+        : createProceduralFactions(
+            worldSeed,
+            catalog,
+            worldMode === "sandbox" ? 18 : 12
+          );
+    const territories =
+      worldMode === "earth"
+        ? []
+        : createProceduralTerritories(factions, worldSeed);
+    const initialNpcs =
+      worldMode === "earth"
+        ? []
+        : factions.flatMap((faction) => {
+            const founders = [
+              makeNpc(faction, catalog, 0),
+              makeNpc(faction, catalog, 1)
+            ];
+            founders.forEach((npc) => {
+              npc.populationWeight = (faction.population ?? 100) / founders.length;
+              npc.tags = Array.from(
+                new Set([...(npc.tags ?? []), "Original Founder"])
+              );
+            });
+            return founders;
+          });
+
     set({
       worldName:
         name ??
@@ -588,21 +1089,29 @@ export const useGameStore = create<GameStore>((set, get) => {
       worldMode,
       viewMode: "map2d",
       supportedFactionId: null,
-      seed: Math.floor(Math.random() * 999_999_999),
+      workspaceMode: "play",
+      era: worldMode === "earth" ? "modern" : "medieval",
+      conflictScenario: "organic",
+      populationSeed: 100,
+      seed: worldSeed,
       playMode: false,
       tool: "select",
       objects: [],
       factions,
       civilizations: civilizationsFromFactions(factions),
-      territories: [],
+      territories,
       territoryDraft: [],
       selectedTerritoryId: null,
-      npcs: [],
+      npcs: initialNpcs,
       quests: DEFAULT_QUESTS.map((quest) => ({ ...quest })),
       selectedObjectId: null,
-      selectedFactionId: "USA",
+      selectedFactionId: factions[0]?.id ?? null,
       selectedSubdivisionId: null,
-      logs: [`Created ${worldMode} world in 2D battle mode.`],
+      logs: [
+        worldMode === "earth"
+          ? "Created Earth world in 2D battle mode."
+          : `Created ${worldMode} world with ${factions.length} terrain-shaped starting civilizations and founder families.`
+      ],
       tick: 0
     });
   },
@@ -898,8 +1407,22 @@ export const useGameStore = create<GameStore>((set, get) => {
         effects: [],
         civilizationId,
         occupationStartedTick: null,
-        revivalCount: 0
+        revivalCount: 0,
+        focus: "balanced",
+        integrationPolicy: "balanced",
+        population: 180_000,
+        cityCount: 1,
+        townCount: 8,
+        integrationProgress: 50,
+        military: {
+          army: 42_000,
+          navy: 3_500,
+          airForce: state.era === "modern" || state.era === "future" ? 2_400 : 0,
+          reserves: 75_000,
+          doctrine: "balanced"
+        }
       };
+      faction.army = faction.military!.army;
 
       const civilization: CivilizationRecord = {
         id: civilizationId,
@@ -931,56 +1454,178 @@ export const useGameStore = create<GameStore>((set, get) => {
       };
     }),
 
-  startWorldWar: () =>
+  startWorldWar: () => get().startConflictScenario("world-war"),
+
+  startConflictScenario: (scenario) =>
     set((state) => {
-      const candidates = [...state.factions]
-        .filter((faction) => !faction.controlledBy)
-        .sort((a, b) => b.army + b.treasury * 0.03 - (a.army + a.treasury * 0.03))
-        .slice(0, 40);
-
-      if (candidates.length < 2) return state;
-
-      const teamA = candidates.filter((_, index) => index % 2 === 0);
-      const teamB = candidates.filter((_, index) => index % 2 === 1);
-      const teamAIds = new Set(teamA.map((faction) => faction.id));
-      const teamBIds = new Set(teamB.map((faction) => faction.id));
-
-      let npcs = state.npcs;
-      for (const faction of candidates) {
-        npcs = ensureSquad(npcs, faction, state.catalog, 6);
+      if (scenario === "organic") {
+        return {
+          conflictScenario: "organic",
+          playMode: true,
+          logs: [
+            "Organic diplomacy enabled. Nations will negotiate, ally, break alliances and occasionally start wars on their own.",
+            ...state.logs
+          ].slice(0, 120)
+        };
       }
 
-      const factions = state.factions.map((faction) => {
-        if (!teamAIds.has(faction.id) && !teamBIds.has(faction.id)) return faction;
+      const factions = state.factions.map((faction) => ({
+        ...faction,
+        relations: { ...faction.relations }
+      }));
+      const active = factions
+        .filter((faction) => !faction.controlledBy)
+        .sort(
+          (a, b) =>
+            b.army + b.treasury * 0.08 - (a.army + a.treasury * 0.08)
+        );
 
-        const enemies = teamAIds.has(faction.id) ? teamB : teamA;
-        const allies = teamAIds.has(faction.id) ? teamA : teamB;
-        const relations = { ...faction.relations };
+      if (active.length < 2) return state;
 
-        for (const enemy of enemies) {
-          relations[enemy.id] = "war";
+      const byId = new Map(factions.map((faction) => [faction.id, faction]));
+      const setPair = (aId: string, bId: string, relation: Relation) => {
+        const a = byId.get(aId);
+        const b = byId.get(bId);
+        if (!a || !b || aId === bId) return;
+        a.relations[bId] = relation;
+        b.relations[aId] = relation;
+      };
+
+      const selected =
+        active.find((faction) => faction.id === state.selectedFactionId) ??
+        active[0];
+
+      let npcs = state.npcs;
+      const participants = new Set<string>();
+      const events: string[] = [];
+
+      if (scenario === "regional-war") {
+        const rivals = nearestNations(selected, active, 10).filter(
+          (candidate) => selected.relations[candidate.id] !== "allied"
+        );
+        const rival = rivals[0] ?? active.find((item) => item.id !== selected.id);
+        if (!rival) return state;
+
+        setPair(selected.id, rival.id, "war");
+        participants.add(selected.id);
+        participants.add(rival.id);
+
+        const selectedAllies = nearestNations(selected, active, 14)
+          .filter((candidate) => selected.relations[candidate.id] === "allied")
+          .slice(0, 2);
+        const rivalAllies = nearestNations(rival, active, 14)
+          .filter((candidate) => rival.relations[candidate.id] === "allied")
+          .slice(0, 2);
+
+        for (const ally of selectedAllies) {
+          setPair(ally.id, selected.id, "allied");
+          setPair(ally.id, rival.id, "war");
+          participants.add(ally.id);
         }
-        for (const ally of allies) {
-          if (ally.id !== faction.id) relations[ally.id] = "allied";
+        for (const ally of rivalAllies) {
+          setPair(ally.id, rival.id, "allied");
+          setPair(ally.id, selected.id, "war");
+          participants.add(ally.id);
         }
 
-        return {
-          ...faction,
-          allianceName: teamAIds.has(faction.id)
-            ? "Blue World Coalition"
-            : "Golden World Coalition",
-          relations
+        events.push(
+          `Regional war began between ${selected.name} and ${rival.name}. Existing nearby allies may be pulled in, but the rest of the world remains outside the conflict.`
+        );
+      } else {
+        const anchorA = active[0];
+        const anchorB =
+          active
+            .slice(1)
+            .filter((candidate) => geographicDistance(anchorA, candidate) > 35)
+            .sort(
+              (a, b) =>
+                b.army + b.treasury * 0.08 - (a.army + a.treasury * 0.08)
+            )[0] ?? active[1];
+
+        const chooseCoalition = (
+          anchor: Faction,
+          opposingAnchor: Faction
+        ) => {
+          const existingAllies = nearestNations(anchor, active, 24)
+            .filter((candidate) => anchor.relations[candidate.id] === "allied")
+            .slice(0, 3);
+          const nearbyPartners = nearestNations(anchor, active, 12)
+            .filter(
+              (candidate) =>
+                candidate.id !== opposingAnchor.id &&
+                !existingAllies.some((ally) => ally.id === candidate.id)
+            )
+            .slice(0, 2);
+
+          return [anchor, ...existingAllies, ...nearbyPartners].filter(
+            (item, index, list) =>
+              list.findIndex((candidate) => candidate.id === item.id) === index
+          );
         };
-      });
+
+        const teamA = chooseCoalition(anchorA, anchorB);
+        const teamAIds = new Set(teamA.map((item) => item.id));
+        const teamB = chooseCoalition(anchorB, anchorA).filter(
+          (item) => !teamAIds.has(item.id)
+        );
+
+        const allianceA = choose(
+          state.catalog.allianceNames,
+          "Northern Coalition",
+          0.27
+        );
+        const allianceB = choose(
+          state.catalog.allianceNames,
+          "Southern Coalition",
+          0.73
+        );
+
+        for (const member of teamA) {
+          member.allianceName = allianceA;
+          participants.add(member.id);
+          for (const ally of teamA) {
+            if (member.id !== ally.id) setPair(member.id, ally.id, "allied");
+          }
+        }
+        for (const member of teamB) {
+          member.allianceName = allianceB;
+          participants.add(member.id);
+          for (const ally of teamB) {
+            if (member.id !== ally.id) setPair(member.id, ally.id, "allied");
+          }
+        }
+
+        for (const member of teamA) {
+          const target = [...teamB].sort(
+            (a, b) =>
+              geographicDistance(member, a) - geographicDistance(member, b)
+          )[0];
+          if (target) setPair(member.id, target.id, "war");
+        }
+        for (const member of teamB) {
+          const target = [...teamA].sort(
+            (a, b) =>
+              geographicDistance(member, a) - geographicDistance(member, b)
+          )[0];
+          if (target) setPair(member.id, target.id, "war");
+        }
+
+        events.push(
+          `World War began around ${anchorA.name} and ${anchorB.name}: ${teamA.length} nations in ${allianceA} and ${teamB.length} in ${allianceB}. Other nations can remain neutral or enter later through diplomacy.`
+        );
+      }
+
+      for (const id of participants) {
+        const faction = byId.get(id);
+        if (faction) npcs = ensureSquad(npcs, faction, state.catalog, 10);
+      }
 
       return {
         factions,
         npcs,
+        conflictScenario: scenario,
         playMode: true,
-        logs: [
-          `World War started: ${teamA.length} nations vs ${teamB.length} nations.`,
-          ...state.logs
-        ].slice(0, 120)
+        logs: [...events, ...state.logs].slice(0, 120)
       };
     }),
 
@@ -997,7 +1642,14 @@ export const useGameStore = create<GameStore>((set, get) => {
         history: [...civilization.history]
       }));
 
-      const nextFactions = state.factions.map((faction) => {
+      const nextTick = state.tick + 1;
+      const eraConfig = eraSettings(state.era);
+      const governanceEvents: string[] = [];
+      const diplomacyEvents: string[] = [];
+      const birthEvents: string[] = [];
+
+      const nextFactions: Faction[] = state.factions.map((rawFaction) => {
+        const faction = normalizeFactionCivilization(rawFaction);
         const modifiers = nationModifiers(faction);
         const effects = (faction.effects ?? [])
           .map((effect) => ({
@@ -1006,28 +1658,245 @@ export const useGameStore = create<GameStore>((set, get) => {
           }))
           .filter((effect) => effect.remainingTicks > 0);
 
+        const focus = faction.focus ?? "balanced";
+        const population = Math.max(2, faction.population ?? 100_000);
+        const focusIncome =
+          focus === "economy" ? 1.75 : focus === "cities" ? 1.2 : 1;
+        const baseIncome =
+          Math.max(8, population / 750_000) *
+          focusIncome *
+          modifiers.income;
+
+        const recruitmentRate =
+          focus === "military"
+            ? 0.000012
+            : focus === "balanced"
+              ? 0.000004
+              : 0.0000018;
+        const recruitment =
+          faction.controlledBy
+            ? 0
+            : population *
+              recruitmentRate *
+              Math.max(0.5, 1 + modifiers.morale / 100);
+
+        const military = {
+          ...(faction.military ?? {
+            army: faction.army,
+            navy: Math.round(faction.army * 0.1),
+            airForce: Math.round(faction.army * 0.07),
+            reserves: Math.round(faction.army * 1.5),
+            doctrine: "balanced" as const
+          })
+        };
+
+        const army = Math.min(
+          Math.max(5_000, population * 0.12),
+          Math.max(0, faction.army + recruitment)
+        );
+
+        if (focus === "naval" && !faction.controlledBy) {
+          military.navy = Math.min(
+            Math.max(1_000, population * 0.02),
+            military.navy + Math.max(8, population * 0.0000025)
+          );
+          military.doctrine = "naval";
+        }
+        if (focus === "military" && !faction.controlledBy) {
+          military.reserves += Math.max(20, population * 0.000004);
+          military.doctrine = "aggressive";
+        }
+        if (focus === "diplomacy") {
+          military.doctrine =
+            military.doctrine === "aggressive" ? "balanced" : military.doctrine;
+        }
+
+        military.army = army;
+
+        let cityCount = faction.cityCount ?? 3;
+        let townCount = faction.townCount ?? 12;
+        let nextPopulation = population;
+
+        if (focus === "cities" && nextTick % 24 === 0 && faction.treasury > 200) {
+          cityCount += 1;
+          townCount += 2;
+          nextPopulation += Math.max(25, Math.round(population * 0.00008));
+        } else if (!faction.controlledBy) {
+          nextPopulation += Math.max(
+            1,
+            Math.round(population * (focus === "economy" ? 0.000035 : 0.00002))
+          );
+        }
+
         return {
           ...faction,
           effects,
+          population: nextPopulation,
+          cityCount,
+          townCount,
+          military,
           relations: { ...faction.relations },
-          treasury: faction.treasury + 2 * modifiers.income,
+          treasury: Math.max(0, faction.treasury + baseIncome),
           stability: Math.max(
             0,
-            Math.min(100, faction.stability + modifiers.morale * 0.015)
+            Math.min(
+              100,
+              faction.stability +
+                modifiers.morale * 0.015 +
+                (focus === "diplomacy" ? 0.025 : 0) +
+                (focus === "cities" ? 0.02 : 0)
+            )
           ),
-          army: Math.min(
-            500,
-            faction.army +
-              (faction.controlledBy
-                ? 0
-                : 0.12 * Math.max(0.35, 1 + modifiers.morale / 100))
-          )
+          army
         };
       });
+
+      // Territorial integration can deliberately move citizens into newly
+      // conquered lands. This raises long-term control but costs population and
+      // money in the homeland.
+      for (const nation of nextFactions) {
+        if (nation.controlledBy || nation.focus !== "integration") continue;
+        const subjects = nextFactions.filter(
+          (candidate) => candidate.controlledBy === nation.id
+        );
+        if (!subjects.length) continue;
+
+        const policy = nation.integrationPolicy ?? "balanced";
+        const policyRate =
+          policy === "settler" ? 0.00006 : policy === "balanced" ? 0.00003 : 0.000012;
+
+        for (const subject of subjects.slice(0, 3)) {
+          const migrants = Math.max(
+            20,
+            Math.min(
+              5_000,
+              Math.round((nation.population ?? 100_000) * policyRate)
+            )
+          );
+          nation.population = Math.max(2, (nation.population ?? 2) - migrants);
+          subject.population = (subject.population ?? 2) + migrants;
+          subject.integrationProgress = Math.min(
+            100,
+            (subject.integrationProgress ?? 25) +
+              (policy === "settler" ? 0.5 : policy === "balanced" ? 0.28 : 0.12)
+          );
+          nation.treasury = Math.max(0, nation.treasury - migrants * 0.02);
+
+          if (nextTick % 30 === 0) {
+            subject.townCount = (subject.townCount ?? 0) + 1;
+            if ((subject.integrationProgress ?? 0) > 70 && nextTick % 60 === 0) {
+              subject.cityCount = (subject.cityCount ?? 0) + 1;
+            }
+            governanceEvents.push(
+              `${nation.name} moved ${migrants.toLocaleString()} settlers into ${subject.name}; integration is now ${Math.round(subject.integrationProgress ?? 0)}%.`
+            );
+          }
+        }
+      }
 
       const byId = new Map(nextFactions.map((faction) => [faction.id, faction]));
       const warEvents: string[] = [];
       const processed = new Set<string>();
+
+      // Organic diplomacy remains active even during larger scenarios. Only a
+      // small number of relations change at once so the whole planet does not
+      // instantly collapse into universal war.
+      if (nextTick % 8 === 0) {
+        const sovereign = nextFactions.filter((faction) => !faction.controlledBy);
+        if (sovereign.length > 1) {
+          const actor =
+            sovereign[
+              Math.abs(Math.floor(nextTick / 8 + state.seed)) % sovereign.length
+            ];
+          const nearby = nearestNations(actor, sovereign, 10);
+          const target =
+            nearby[
+              Math.floor(
+                deterministicRoll(actor.id + ":diplomacy", nextTick) *
+                  Math.max(1, nearby.length)
+              )
+            ];
+
+          if (target) {
+            const relation = actor.relations[target.id] ?? "neutral";
+            const roll = deterministicRoll(
+              `${actor.id}:${target.id}:${state.conflictScenario}`,
+              nextTick
+            );
+            const distance = geographicDistance(actor, target);
+            const diplomacyBonus =
+              actor.focus === "diplomacy" || target.focus === "diplomacy"
+                ? 0.16
+                : 0;
+            const militaryPressure =
+              actor.focus === "military" ? 0.1 : 0;
+            const scenarioPressure =
+              state.conflictScenario === "world-war"
+                ? 0.12
+                : state.conflictScenario === "regional-war"
+                  ? 0.05
+                  : 0;
+
+            if (
+              relation === "neutral" &&
+              roll < 0.28 * eraConfig.diplomacyRate + diplomacyBonus
+            ) {
+              actor.relations[target.id] = "allied";
+              target.relations[actor.id] = "allied";
+              const allianceName = choose(
+                state.catalog.allianceNames,
+                "Mutual Defense Pact",
+                roll
+              );
+              actor.allianceName = actor.allianceName ?? allianceName;
+              target.allianceName = target.allianceName ?? allianceName;
+              diplomacyEvents.push(
+                `${actor.name} and ${target.name} formed the ${allianceName}.`
+              );
+            } else if (
+              relation === "neutral" &&
+              distance < 48 &&
+              roll >
+                0.91 -
+                  militaryPressure -
+                  scenarioPressure +
+                  diplomacyBonus * 0.5
+            ) {
+              actor.relations[target.id] = "war";
+              target.relations[actor.id] = "war";
+              diplomacyEvents.push(
+                `${actor.name} entered a new war with nearby ${target.name}.`
+              );
+
+              const supportingAlly = nearestNations(actor, sovereign, 16).find(
+                (candidate) =>
+                  candidate.relations[actor.id] === "allied" &&
+                  candidate.id !== target.id &&
+                  deterministicRoll(candidate.id + target.id, nextTick) > 0.45
+              );
+              if (supportingAlly) {
+                supportingAlly.relations[target.id] = "war";
+                target.relations[supportingAlly.id] = "war";
+                diplomacyEvents.push(
+                  `${supportingAlly.name} entered the war in support of ${actor.name}.`
+                );
+              }
+            } else if (relation === "allied" && roll > 0.985) {
+              actor.relations[target.id] = "neutral";
+              target.relations[actor.id] = "neutral";
+              diplomacyEvents.push(
+                `${actor.name} and ${target.name} ended their alliance.`
+              );
+            } else if (relation === "war" && roll < 0.045 + diplomacyBonus) {
+              actor.relations[target.id] = "neutral";
+              target.relations[actor.id] = "neutral";
+              diplomacyEvents.push(
+                `${actor.name} and ${target.name} agreed to peace.`
+              );
+            }
+          }
+        }
+      }
 
       for (const faction of nextFactions) {
         const warTargetId = Object.entries(faction.relations).find(([, relation]) => relation === "war")?.[0];
@@ -1035,10 +1904,84 @@ export const useGameStore = create<GameStore>((set, get) => {
         npcs = ensureSquad(npcs, faction, state.catalog, 8);
       }
 
-      const mutableNpcs = npcs.map((npc) => ({ ...npc, stats: { ...npc.stats } }));
+      const mutableNpcs: NpcUnit[] = npcs.map((npc) => ({
+        ...npc,
+        tags: [...(npc.tags ?? [])],
+        parentIds: [...(npc.parentIds ?? [])],
+        childIds: [...(npc.childIds ?? [])],
+        stats: { ...npc.stats }
+      }));
+
+      // Family simulation uses tracked agents while large civilian populations stay
+      // aggregated. This keeps a real ancestry graph without trying to render or
+      // store millions of individual people in one world document.
+      if (
+        nextTick % eraConfig.birthEvery === 0 &&
+        mutableNpcs.length < 600
+      ) {
+        const familyFactions = nextFactions
+          .filter(
+            (faction) =>
+              mutableNpcs.filter(
+                (npc) =>
+                  npc.factionId === faction.id &&
+                  npc.state !== "dead"
+              ).length >= 2
+          )
+          .slice(0, 12);
+
+        for (const faction of familyFactions) {
+          const adults = mutableNpcs.filter(
+            (npc) =>
+              npc.factionId === faction.id &&
+              npc.state !== "dead" &&
+              npcAgeYears(npc, nextTick) >= 18 &&
+              npcAgeYears(npc, nextTick) <= 46
+          );
+          const mother = adults.find((npc) => npc.sex === "female");
+          const father = adults.find(
+            (npc) => npc.sex === "male" && npc.id !== mother?.id
+          );
+          if (!mother || !father) continue;
+
+          const birthRoll = deterministicRoll(
+            `${mother.id}:${father.id}:birth`,
+            nextTick
+          );
+          if (birthRoll > 0.64) continue;
+
+          const child = makeChildNpc(
+            mother,
+            father,
+            faction,
+            state.catalog,
+            nextTick
+          );
+          mutableNpcs.push(child);
+          mother.partnerId = mother.partnerId ?? father.id;
+          father.partnerId = father.partnerId ?? mother.id;
+          mother.childIds = Array.from(
+            new Set([...(mother.childIds ?? []), child.id])
+          );
+          father.childIds = Array.from(
+            new Set([...(father.childIds ?? []), child.id])
+          );
+          faction.population = (faction.population ?? 2) + 1;
+
+          birthEvents.push(
+            `${child.name} was born in ${faction.name}, generation ${child.generation ?? 1}.`
+          );
+        }
+      }
 
       for (const npc of mutableNpcs) {
         if (npc.state === "dead") continue;
+
+        if (npcAgeYears(npc, nextTick) < 16) {
+          npc.state = "idle";
+          npc.targetFactionId = null;
+          continue;
+        }
 
         const faction = byId.get(npc.factionId);
         if (!faction) continue;
@@ -1062,7 +2005,32 @@ export const useGameStore = create<GameStore>((set, get) => {
         const distance = angleDistance(current, target);
 
         if (distance > 4.5) {
-          const step = 0.22 + npc.stats.speed * 0.008;
+          const military = faction.military;
+          const expeditionPenalty =
+            distance > 24 && (military?.navy ?? 0) < 2_500 ? 0.42 : 1;
+          const terrainValue =
+            state.worldMode === "earth"
+              ? 0
+              : proceduralLandValue(
+                  (npc.lat + targetFaction.lat) / 2,
+                  (npc.lon + targetFaction.lon) / 2,
+                  state.seed
+                );
+          const terrainPenalty =
+            state.worldMode === "earth"
+              ? 1
+              : terrainValue > 0.95
+                ? 0.46
+                : terrainValue < -0.08
+                  ? (military?.navy ?? 0) > 500
+                    ? 0.72
+                    : 0.22
+                  : 1;
+          const step =
+            (0.16 + npc.stats.speed * 0.006) *
+            eraConfig.movement *
+            expeditionPenalty *
+            terrainPenalty;
           const [lat, lon] = moveToward(current, target, step);
           npc.lat = lat;
           npc.lon = lon;
@@ -1128,34 +2096,139 @@ export const useGameStore = create<GameStore>((set, get) => {
           const attackerMods = nationModifiers(attacker);
           const defenderMods = nationModifiers(defender);
 
+          const frontDistance = geographicDistance(attacker, defender);
+          const attackerMilitary = attacker.military ?? {
+            army: attacker.army,
+            navy: 0,
+            airForce: 0,
+            reserves: 0,
+            doctrine: "balanced" as const
+          };
+          const defenderMilitary = defender.military ?? {
+            army: defender.army,
+            navy: 0,
+            airForce: 0,
+            reserves: 0,
+            doctrine: "balanced" as const
+          };
+
+          const expedition =
+            frontDistance > 20
+              ? Math.max(
+                  0.42,
+                  Math.min(
+                    1.18,
+                    0.55 +
+                      (attackerMilitary.navy /
+                        Math.max(1, attacker.army)) *
+                        3.5 *
+                        eraConfig.navalPower
+                  )
+                )
+              : 1;
+
+          const defenderNaval =
+            frontDistance > 20
+              ? Math.max(
+                  0.5,
+                  Math.min(
+                    1.15,
+                    0.62 +
+                      (defenderMilitary.navy /
+                        Math.max(1, defender.army)) *
+                        3 *
+                        eraConfig.navalPower
+                  )
+                )
+              : 1;
+
+          const attackerAir =
+            1 +
+            Math.min(
+              0.32,
+              (attackerMilitary.airForce / Math.max(1, attacker.army)) *
+                1.8 *
+                eraConfig.airPower
+            );
+          const defenderAir =
+            1 +
+            Math.min(
+              0.28,
+              (defenderMilitary.airForce / Math.max(1, defender.army)) *
+                1.6 *
+                eraConfig.airPower
+            );
+
+          const attackerDoctrine =
+            attackerMilitary.doctrine === "aggressive"
+              ? 1.12
+              : attackerMilitary.doctrine === "maneuver"
+                ? 1.08
+                : 1;
+          const defenderDoctrine =
+            defenderMilitary.doctrine === "defensive" ? 1.14 : 1;
+
           const attackRoll =
             attacker.army *
             attackerMods.attack *
-            (0.035 + Math.random() * 0.035) *
-            (0.75 + attackerDiscipline / 150);
+            eraConfig.battleRate *
+            (0.75 + Math.random() * 0.5) *
+            (0.75 + attackerDiscipline / 150) *
+            expedition *
+            attackerAir *
+            attackerDoctrine;
           const defenseRoll =
             defender.army *
             defenderMods.defense *
-            (0.035 + Math.random() * 0.035) *
-            (0.75 + defenderDiscipline / 150);
+            eraConfig.battleRate *
+            (0.75 + Math.random() * 0.5) *
+            (0.75 + defenderDiscipline / 150) *
+            defenderNaval *
+            defenderAir *
+            defenderDoctrine;
 
-          attacker.army = Math.max(0, attacker.army - defenseRoll * 0.42);
-          defender.army = Math.max(0, defender.army - attackRoll * 0.5);
-          attacker.treasury = Math.max(0, attacker.treasury - 3);
-          defender.treasury = Math.max(0, defender.treasury - 3);
+          const attackerLoss = defenseRoll * 0.55;
+          const defenderLoss = attackRoll * 0.62;
+          attacker.army = Math.max(0, attacker.army - attackerLoss);
+          defender.army = Math.max(0, defender.army - defenderLoss);
+          attacker.population = Math.max(
+            2,
+            (attacker.population ?? 2) - Math.round(attackerLoss * 0.08)
+          );
+          defender.population = Math.max(
+            2,
+            (defender.population ?? 2) - Math.round(defenderLoss * 0.1)
+          );
+          attacker.treasury = Math.max(
+            0,
+            attacker.treasury - Math.max(4, attackerLoss / 200)
+          );
+          defender.treasury = Math.max(
+            0,
+            defender.treasury - Math.max(4, defenderLoss / 200)
+          );
 
-          const attackerAlive = attackerUnits.length;
-          const defenderAlive = defenderUnits.length;
+          if (attacker.military) attacker.military.army = attacker.army;
+          if (defender.military) defender.military.army = defender.army;
+
+          const defenderCollapse = Math.max(
+            600,
+            (defender.population ?? 100_000) * 0.000035
+          );
+          const attackerCollapse = Math.max(
+            600,
+            (attacker.population ?? 100_000) * 0.000035
+          );
 
           if (
-            (defender.army <= 1 || defenderAlive === 0) &&
-            attacker.army > defender.army &&
-            attackerAlive > 0
+            defender.army <= defenderCollapse &&
+            attacker.army > defender.army * 1.25
           ) {
             defender.controlledBy = attacker.controlledBy ?? attacker.id;
             defender.occupationStartedTick = state.tick + 1;
             defender.stability = 30;
-            defender.army = 12;
+            defender.army = Math.max(800, defenderCollapse * 0.55);
+            if (defender.military) defender.military.army = defender.army;
             defender.relations[attacker.id] = "neutral";
             attacker.relations[defender.id] = "neutral";
             civilizations = civilizations.map((civilization) =>
@@ -1174,14 +2247,14 @@ export const useGameStore = create<GameStore>((set, get) => {
               `${attacker.name} conquered ${defender.name}. The ${civilizations.find((item) => item.id === defender.civilizationId)?.adjective ?? defender.name} civilization survived the fall.`
             );
           } else if (
-            (attacker.army <= 1 || attackerAlive === 0) &&
-            defender.army > attacker.army &&
-            defenderAlive > 0
+            attacker.army <= attackerCollapse &&
+            defender.army > attacker.army * 1.25
           ) {
             attacker.controlledBy = defender.controlledBy ?? defender.id;
             attacker.occupationStartedTick = state.tick + 1;
             attacker.stability = 30;
-            attacker.army = 12;
+            attacker.army = Math.max(800, attackerCollapse * 0.55);
+            if (attacker.military) attacker.military.army = attacker.army;
             attacker.relations[defender.id] = "neutral";
             defender.relations[attacker.id] = "neutral";
             civilizations = civilizations.map((civilization) =>
@@ -1203,7 +2276,6 @@ export const useGameStore = create<GameStore>((set, get) => {
         }
       }
 
-      const nextTick = state.tick + 1;
       const revivalEvents: string[] = [];
       const nextTerritories = [...state.territories];
 
@@ -1242,7 +2314,14 @@ export const useGameStore = create<GameStore>((set, get) => {
           occupied.controlledBy = null;
           occupied.occupationStartedTick = null;
           occupied.revivalCount = (occupied.revivalCount ?? 0) + 1;
-          occupied.army = Math.max(34, loyalPeople.length * 7);
+          occupied.army = Math.max(5_000, loyalPeople.length * 2_500);
+          if (occupied.military) {
+            occupied.military.army = occupied.army;
+            occupied.military.reserves = Math.max(
+              occupied.military.reserves,
+              occupied.army * 1.5
+            );
+          }
           occupied.stability = 58;
           occupied.relations[controllerId] = "war";
           if (controller) controller.relations[occupied.id] = "war";
@@ -1321,6 +2400,14 @@ export const useGameStore = create<GameStore>((set, get) => {
             ? `New ${civilization.name}`
             : civilization.name;
 
+        const successorArmy = Math.max(6_000, survivors.length * 2_000);
+        const successorPopulation = Math.max(
+          35_000,
+          survivors.reduce(
+            (sum, person) => sum + (person.populationWeight ?? 1),
+            0
+          ) * 250
+        );
         const successor: Faction = {
           id: factionId,
           name: successorName,
@@ -1332,8 +2419,8 @@ export const useGameStore = create<GameStore>((set, get) => {
           lon,
           color: civilization.color,
           accentColor: seededColor(factionId + "-accent"),
-          army: Math.max(28, survivors.length * 6),
-          treasury: 320,
+          army: successorArmy,
+          treasury: 18_000,
           stability: 64,
           controlledBy: null,
           rulerName: null,
@@ -1343,7 +2430,22 @@ export const useGameStore = create<GameStore>((set, get) => {
           effects: [],
           civilizationId: civilization.id,
           occupationStartedTick: null,
-          revivalCount: civilization.revivalCount + 1
+          revivalCount: civilization.revivalCount + 1,
+          focus: "integration",
+          integrationPolicy: "settler",
+          population: successorPopulation,
+          cityCount: 1,
+          townCount: 4,
+          integrationProgress: 35,
+          military: {
+            army: successorArmy,
+            navy: Math.round(successorArmy * 0.05),
+            airForce: state.era === "modern" || state.era === "future"
+              ? Math.round(successorArmy * 0.025)
+              : 0,
+            reserves: successorArmy * 2,
+            doctrine: "defensive"
+          }
         };
 
         successorFactions.push(successor);
@@ -1418,6 +2520,9 @@ export const useGameStore = create<GameStore>((set, get) => {
         tick: state.tick + 1,
         logs: [
           ...revivalEvents,
+          ...diplomacyEvents,
+          ...governanceEvents,
+          ...birthEvents,
           ...warEvents,
           ...progress.newlyCompleted.map((title) => `Quest completed: ${title}.`),
           ...state.logs
@@ -1434,6 +2539,10 @@ export const useGameStore = create<GameStore>((set, get) => {
       worldMode: state.worldMode,
       viewMode: state.viewMode,
       supportedFactionId: state.supportedFactionId,
+      workspaceMode: state.workspaceMode,
+      era: state.era,
+      conflictScenario: state.conflictScenario,
+      populationSeed: state.populationSeed,
       seed: state.seed,
       objects: state.objects,
       factions: state.factions,
@@ -1454,6 +2563,10 @@ export const useGameStore = create<GameStore>((set, get) => {
       worldMode: snapshot.worldMode,
       viewMode: snapshot.viewMode ?? "map2d",
       supportedFactionId: snapshot.supportedFactionId ?? null,
+      workspaceMode: snapshot.workspaceMode ?? "play",
+      era: snapshot.era ?? "modern",
+      conflictScenario: snapshot.conflictScenario ?? "organic",
+      populationSeed: snapshot.populationSeed ?? 100,
       seed: snapshot.seed,
       objects: snapshot.objects,
       factions: snapshot.factions,
@@ -1508,6 +2621,10 @@ export const useGameStore = create<GameStore>((set, get) => {
       worldMode: "earth",
       viewMode: "map2d",
       supportedFactionId: null,
+      workspaceMode: "play",
+      era: "modern",
+      conflictScenario: "organic",
+      populationSeed: 100,
       seed: 48271,
       playMode: false,
       tool: "select",

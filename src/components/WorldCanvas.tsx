@@ -3,7 +3,7 @@ import { Html, OrbitControls, Stars } from "@react-three/drei";
 import { feature } from "topojson-client";
 import worldAtlas from "world-atlas/countries-110m.json";
 import * as THREE from "three";
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { US_STATES } from "../data/usStates";
 import { GLOBE_RADIUS, latLonToXYZ, xyzToLatLon } from "../game/geo";
 import type { LatLon, SceneObject, TerritoryPatch, WorldMode } from "../game/types";
@@ -889,6 +889,17 @@ function flatTerrainColor(
 
 export function Map2D() {
   const svgRef = useRef<SVGSVGElement>(null);
+  const dragRef = useRef<{
+    clientX: number;
+    clientY: number;
+    centerX: number;
+    centerY: number;
+  } | null>(null);
+  const movedRef = useRef(false);
+
+  const [zoom, setZoom] = useState(1);
+  const [center, setCenter] = useState({ x: FLAT_W / 2, y: FLAT_H / 2 });
+
   const worldMode = useGameStore((state) => state.worldMode);
   const seed = useGameStore((state) => state.seed);
   const factions = useGameStore((state) => state.factions);
@@ -903,6 +914,26 @@ export function Map2D() {
   const addTerritoryPoint = useGameStore((state) => state.addTerritoryPoint);
 
   const features = useMemo(countryFeatures, []);
+
+  const viewW = FLAT_W / zoom;
+  const viewH = FLAT_H / zoom;
+  const viewX = Math.max(0, Math.min(FLAT_W - viewW, center.x - viewW / 2));
+  const viewY = Math.max(0, Math.min(FLAT_H - viewH, center.y - viewH / 2));
+
+  const clampCenter = (x: number, y: number, nextZoom = zoom) => {
+    const w = FLAT_W / nextZoom;
+    const h = FLAT_H / nextZoom;
+    return {
+      x: Math.max(w / 2, Math.min(FLAT_W - w / 2, x)),
+      y: Math.max(h / 2, Math.min(FLAT_H - h / 2, y))
+    };
+  };
+
+  const updateZoom = (value: number) => {
+    const next = Math.max(1, Math.min(8, value));
+    setZoom(next);
+    setCenter((current) => clampCenter(current.x, current.y, next));
+  };
 
   const byNumeric = useMemo(() => {
     const map = new Map<string, string>();
@@ -953,27 +984,189 @@ export function Map2D() {
     return cells;
   }, [seed, worldMode]);
 
-  const addPoint = (clientX: number, clientY: number) => {
+  const screenToMap = (clientX: number, clientY: number) => {
     const svg = svgRef.current;
-    if (!svg) return;
+    if (!svg) return null;
     const rect = svg.getBoundingClientRect();
-    if (!rect.width || !rect.height) return;
-    const x = ((clientX - rect.left) / rect.width) * FLAT_W;
-    const y = ((clientY - rect.top) / rect.height) * FLAT_H;
+    if (!rect.width || !rect.height) return null;
+
+    return {
+      x: viewX + ((clientX - rect.left) / rect.width) * viewW,
+      y: viewY + ((clientY - rect.top) / rect.height) * viewH
+    };
+  };
+
+  const addPoint = (clientX: number, clientY: number) => {
+    const point = screenToMap(clientX, clientY);
+    if (!point) return;
     addTerritoryPoint([
-      90 - (y / FLAT_H) * 180,
-      (x / FLAT_W) * 360 - 180
+      90 - (point.y / FLAT_H) * 180,
+      (point.x / FLAT_W) * 360 - 180
     ]);
   };
+
+  const visible = (x: number, y: number, padding = 18) =>
+    x >= viewX - padding &&
+    x <= viewX + viewW + padding &&
+    y >= viewY - padding &&
+    y <= viewY + viewH + padding;
+
+  const formatCompact = (value: number) =>
+    new Intl.NumberFormat("en-US", {
+      notation: "compact",
+      maximumFractionDigits: 1
+    }).format(Math.round(value));
+
+  const armyMarkers = useMemo(() => {
+    const result: Array<{
+      id: string;
+      factionId: string;
+      x: number;
+      y: number;
+      size: number;
+      big: boolean;
+      label: string;
+      emoji: string;
+      color: string;
+      fighting: boolean;
+    }> = [];
+
+    for (const faction of factions) {
+      if (faction.army <= 0) continue;
+      const targetId = Object.entries(faction.relations).find(
+        ([, relation]) => relation === "war"
+      )?.[0];
+      const target = targetId ? byId.get(targetId) : undefined;
+      const atWar = Boolean(target);
+
+      if (
+        zoom < 1.8 &&
+        !atWar &&
+        faction.id !== selectedFactionId &&
+        faction.id !== supportedFactionId
+      ) {
+        continue;
+      }
+
+      let lat = faction.lat;
+      let lon = faction.lon;
+      if (target) {
+        let dLon = target.lon - faction.lon;
+        if (dLon > 180) dLon -= 360;
+        if (dLon < -180) dLon += 360;
+        const advance = zoom >= 4 ? 0.48 : 0.34;
+        lat = faction.lat + (target.lat - faction.lat) * advance;
+        lon = ((faction.lon + dLon * advance + 540) % 360) - 180;
+      }
+
+      const [baseX, baseY] = flatProject(lat, lon);
+      const groupCount =
+        zoom < 2.2
+          ? 1
+          : Math.max(1, Math.min(10, Math.ceil(faction.army / 75_000)));
+      const groupSize = faction.army / groupCount;
+
+      for (let index = 0; index < groupCount; index += 1) {
+        const angle = (index / Math.max(1, groupCount)) * Math.PI * 2;
+        const spread = groupCount === 1 ? 0 : Math.min(14, 3 + zoom * 1.4);
+        result.push({
+          id: `${faction.id}-army-${index}`,
+          factionId: faction.id,
+          x: baseX + Math.cos(angle) * spread,
+          y: baseY + Math.sin(angle) * spread,
+          size: groupSize,
+          big: index === 0,
+          label: formatCompact(groupSize),
+          emoji: faction.emoji,
+          color: faction.color,
+          fighting: atWar
+        });
+      }
+    }
+
+    return result;
+  }, [
+    byId,
+    factions,
+    selectedFactionId,
+    supportedFactionId,
+    zoom
+  ]);
+
+  const fleetMarkers = useMemo(() => {
+    return factions.flatMap((faction) => {
+      const targetId = Object.entries(faction.relations).find(
+        ([, relation]) => relation === "war"
+      )?.[0];
+      const target = targetId ? byId.get(targetId) : undefined;
+      const navy = faction.military?.navy ?? 0;
+      if (!target || navy < 1_000) return [];
+
+      let dLon = target.lon - faction.lon;
+      if (dLon > 180) dLon -= 360;
+      if (dLon < -180) dLon += 360;
+      const lat = faction.lat + (target.lat - faction.lat) * 0.22 - 2;
+      const lon = ((faction.lon + dLon * 0.22 + 540) % 360) - 180;
+      const [x, y] = flatProject(lat, lon);
+
+      return [{
+        id: `${faction.id}-fleet`,
+        factionId: faction.id,
+        x,
+        y,
+        navy,
+        emoji: faction.emoji
+      }];
+    });
+  }, [byId, factions]);
 
   return (
     <div className="map2d-shell">
       <svg
         ref={svgRef}
         className={tool === "territory" ? "map2d drawing" : "map2d"}
-        viewBox="0 0 1000 500"
+        viewBox={`${viewX} ${viewY} ${viewW} ${viewH}`}
+        preserveAspectRatio="xMidYMid meet"
+        onWheel={(event) => {
+          event.preventDefault();
+          updateZoom(zoom * (event.deltaY > 0 ? 0.88 : 1.14));
+        }}
         onPointerDown={(event) => {
-          if (tool === "territory") addPoint(event.clientX, event.clientY);
+          if (tool === "territory") {
+            addPoint(event.clientX, event.clientY);
+            return;
+          }
+
+          movedRef.current = false;
+          dragRef.current = {
+            clientX: event.clientX,
+            clientY: event.clientY,
+            centerX: center.x,
+            centerY: center.y
+          };
+          event.currentTarget.setPointerCapture(event.pointerId);
+        }}
+        onPointerMove={(event) => {
+          const drag = dragRef.current;
+          const svg = svgRef.current;
+          if (!drag || !svg || tool === "territory") return;
+
+          const rect = svg.getBoundingClientRect();
+          const dx = ((event.clientX - drag.clientX) / rect.width) * viewW;
+          const dy = ((event.clientY - drag.clientY) / rect.height) * viewH;
+          if (Math.abs(dx) + Math.abs(dy) > 2) movedRef.current = true;
+          setCenter(clampCenter(drag.centerX - dx, drag.centerY - dy));
+        }}
+        onPointerUp={(event) => {
+          dragRef.current = null;
+          try {
+            event.currentTarget.releasePointerCapture(event.pointerId);
+          } catch {
+            // Pointer capture may already be released by the browser.
+          }
+        }}
+        onPointerCancel={() => {
+          dragRef.current = null;
         }}
       >
         <rect width={FLAT_W} height={FLAT_H} fill="#123d5a" />
@@ -1009,11 +1202,17 @@ export function Map2D() {
                               ? "#ffffff"
                               : "#172331"
                         }
-                        strokeWidth={supported ? 2.5 : selected ? 1.8 : 0.65}
+                        strokeWidth={(supported ? 2.5 : selected ? 1.8 : 0.65) / zoom}
+                        vectorEffect="non-scaling-stroke"
                         onPointerDown={(event) => {
+                          if (tool !== "territory") return;
                           event.stopPropagation();
-                          if (tool === "territory") addPoint(event.clientX, event.clientY);
-                          else selectFaction(faction.id);
+                          addPoint(event.clientX, event.clientY);
+                        }}
+                        onClick={() => {
+                          if (tool !== "territory" && !movedRef.current) {
+                            selectFaction(faction.id);
+                          }
                         }}
                       />
                     ))
@@ -1050,6 +1249,7 @@ export function Map2D() {
               x2={x2}
               y2={y2}
               className="war-line"
+              vectorEffect="non-scaling-stroke"
             />
           );
         })}
@@ -1071,11 +1271,17 @@ export function Map2D() {
               fill={territory.color}
               fillOpacity={0.8}
               stroke="#ffffff"
-              strokeWidth={0.8}
+              strokeWidth={0.8 / zoom}
+              vectorEffect="non-scaling-stroke"
               onPointerDown={(event) => {
+                if (tool !== "territory") return;
                 event.stopPropagation();
-                if (tool === "territory") addPoint(event.clientX, event.clientY);
-                else selectTerritory(territory.id);
+                addPoint(event.clientX, event.clientY);
+              }}
+              onClick={() => {
+                if (tool !== "territory" && !movedRef.current) {
+                  selectTerritory(territory.id);
+                }
               }}
             />
           );
@@ -1088,86 +1294,262 @@ export function Map2D() {
               .join(" ")}
             fill="none"
             stroke="#ffffff"
-            strokeWidth={2}
+            strokeWidth={2 / zoom}
+            vectorEffect="non-scaling-stroke"
           />
         )}
 
-        {npcs
-          .filter((npc) => npc.state !== "dead")
-          .slice(0, 900)
-          .map((npc) => {
-            const faction = byId.get(npc.factionId);
-            const [x, y] = flatProject(npc.lat, npc.lon);
-            const fighting = npc.state === "fighting";
-
+        {zoom >= 2.2 &&
+          factions.map((faction) => {
+            const [x, y] = flatProject(faction.lat, faction.lon);
+            if (!visible(x, y)) return null;
             return (
-              <g key={npc.id}>
+              <g
+                key={`${faction.id}-capital`}
+                className="city-marker capital-marker"
+                onClick={() => selectFaction(faction.id)}
+              >
                 <circle
                   cx={x}
                   cy={y}
-                  r={fighting ? 3.2 : 2.2}
-                  fill={faction?.color ?? "#ffffff"}
-                  stroke={
-                    fighting
-                      ? "#ff3f4b"
-                      : supportedFactionId === npc.factionId
-                        ? "#ffd166"
-                        : "#071019"
-                  }
-                  strokeWidth={fighting ? 1.8 : 0.8}
+                  r={Math.max(1.2, 3 / zoom)}
+                  fill="#f6d365"
+                  stroke="#111820"
+                  strokeWidth={0.8 / zoom}
                 />
-                {fighting && (
-                  <circle
-                    cx={x}
-                    cy={y}
-                    r={6}
-                    fill="none"
-                    stroke="#ff6b6b"
-                    strokeWidth={1.1}
-                    className="battle-pulse"
-                  />
+                {zoom >= 3.2 && (
+                  <text
+                    x={x + 4 / zoom}
+                    y={y - 3 / zoom}
+                    fontSize={Math.max(3, 8 / zoom)}
+                    fill="#f4f7fb"
+                  >
+                    {faction.capital ?? faction.name}
+                  </text>
                 )}
               </g>
             );
           })}
 
-        {supportedFactionId &&
-          (() => {
-            const faction = byId.get(supportedFactionId);
-            if (!faction) return null;
+        {zoom >= 4 &&
+          factions.flatMap((faction) => {
             const [x, y] = flatProject(faction.lat, faction.lon);
-            return (
-              <g>
+            if (!visible(x, y, 35)) return [];
+            const count = Math.min(8, Math.max(0, (faction.cityCount ?? 1) - 1));
+            return Array.from({ length: count }, (_, index) => {
+              const angle =
+                deterministicCityAngle(faction.id, index) * Math.PI * 2;
+              const radius = 6 + (index % 4) * 4;
+              return (
                 <circle
-                  cx={x}
-                  cy={y}
-                  r={9}
-                  fill="none"
-                  stroke="#ffd166"
-                  strokeWidth={2}
+                  key={`${faction.id}-city-${index}`}
+                  cx={x + Math.cos(angle) * radius}
+                  cy={y + Math.sin(angle) * radius}
+                  r={1.1}
+                  fill="#dbe7f3"
+                  opacity={0.85}
                 />
+              );
+            });
+          })}
+
+        {zoom >= 6 &&
+          factions.flatMap((faction) => {
+            const [x, y] = flatProject(faction.lat, faction.lon);
+            if (!visible(x, y, 45)) return [];
+            const count = Math.min(14, Math.max(0, faction.townCount ?? 0));
+            return Array.from({ length: count }, (_, index) => {
+              const angle =
+                deterministicCityAngle(faction.id + "-town", index) * Math.PI * 2;
+              const radius = 10 + (index % 7) * 3.6;
+              return (
+                <rect
+                  key={`${faction.id}-town-${index}`}
+                  x={x + Math.cos(angle) * radius - 0.55}
+                  y={y + Math.sin(angle) * radius - 0.55}
+                  width={1.1}
+                  height={1.1}
+                  rx={0.2}
+                  fill="#a9bbc9"
+                  opacity={0.72}
+                />
+              );
+            });
+          })}
+
+        {armyMarkers
+          .filter((marker) => visible(marker.x, marker.y, 30))
+          .map((marker) => (
+            <g
+              key={marker.id}
+              className={marker.fighting ? "army-flag fighting" : "army-flag"}
+              onClick={() => selectFaction(marker.factionId)}
+            >
+              <circle
+                cx={marker.x}
+                cy={marker.y}
+                r={(marker.big ? 8 : 5.4) / Math.sqrt(zoom)}
+                fill="rgba(7, 13, 20, .86)"
+                stroke={
+                  marker.factionId === supportedFactionId
+                    ? "#ffd166"
+                    : marker.color
+                }
+                strokeWidth={1.5 / Math.sqrt(zoom)}
+                vectorEffect="non-scaling-stroke"
+              />
+              <text
+                x={marker.x}
+                y={marker.y + 2.2 / Math.sqrt(zoom)}
+                textAnchor="middle"
+                fontSize={(marker.big ? 8.5 : 6.4) / Math.sqrt(zoom)}
+              >
+                {marker.emoji}
+              </text>
+              {marker.big && (
                 <text
-                  x={x}
-                  y={y - 11}
+                  x={marker.x}
+                  y={marker.y + 14 / Math.sqrt(zoom)}
                   textAnchor="middle"
-                  fill="#ffd166"
-                  fontSize={11}
+                  fontSize={6.2 / Math.sqrt(zoom)}
+                  fill="#ffffff"
+                  className="army-size-label"
                 >
-                  ★
+                  {marker.label}
                 </text>
-              </g>
-            );
-          })()}
+              )}
+            </g>
+          ))}
+
+        {fleetMarkers
+          .filter((fleet) => visible(fleet.x, fleet.y, 25))
+          .map((fleet) => (
+            <g
+              key={fleet.id}
+              className="fleet-marker"
+              onClick={() => selectFaction(fleet.factionId)}
+            >
+              <circle
+                cx={fleet.x}
+                cy={fleet.y}
+                r={6.2 / Math.sqrt(zoom)}
+                fill="#0b2940"
+                stroke="#60b9e8"
+                strokeWidth={1.2 / Math.sqrt(zoom)}
+              />
+              <text
+                x={fleet.x}
+                y={fleet.y + 2 / Math.sqrt(zoom)}
+                textAnchor="middle"
+                fontSize={7 / Math.sqrt(zoom)}
+              >
+                ⚓
+              </text>
+              {zoom >= 2.3 && (
+                <text
+                  x={fleet.x}
+                  y={fleet.y + 12 / Math.sqrt(zoom)}
+                  textAnchor="middle"
+                  fontSize={5.5 / Math.sqrt(zoom)}
+                  fill="#93d9ff"
+                >
+                  {formatCompact(fleet.navy)}
+                </text>
+              )}
+            </g>
+          ))}
+
+        {zoom >= 5 &&
+          npcs
+            .filter((npc) => npc.state !== "dead")
+            .filter((npc) => {
+              const [x, y] = flatProject(npc.lat, npc.lon);
+              return visible(x, y, 10);
+            })
+            .slice(0, 900)
+            .map((npc) => {
+              const faction = byId.get(npc.factionId);
+              const [x, y] = flatProject(npc.lat, npc.lon);
+              const fighting = npc.state === "fighting";
+
+              return (
+                <g key={npc.id}>
+                  <circle
+                    cx={x}
+                    cy={y}
+                    r={fighting ? 1.8 : 1.25}
+                    fill={faction?.color ?? "#ffffff"}
+                    stroke={
+                      fighting
+                        ? "#ff3f4b"
+                        : supportedFactionId === npc.factionId
+                          ? "#ffd166"
+                          : "#071019"
+                    }
+                    strokeWidth={0.55}
+                  />
+                  {fighting && (
+                    <circle
+                      cx={x}
+                      cy={y}
+                      r={3.2}
+                      fill="none"
+                      stroke="#ff6b6b"
+                      strokeWidth={0.55}
+                      className="battle-pulse"
+                    />
+                  )}
+                </g>
+              );
+            })}
       </svg>
 
       <div className="map2d-hud">
-        <strong>2D Battle Map</strong>
+        <strong>2D Strategy World</strong>
         <span>
           {tool === "territory"
-            ? "Click points to draw a territory."
-            : "Click a nation. NPC dots march and fight here live."}
+            ? "Tap points to draw a territory."
+            : zoom < 2.2
+              ? "Strategic LOD: armies are grouped under national flags."
+              : zoom < 5
+                ? "Operational LOD: armies split into regiments and cities appear."
+                : "Close LOD: tracked people and local battles are visible."}
         </span>
+      </div>
+
+      <div className="map-zoom-control">
+        <button
+          aria-label="Zoom out"
+          onClick={() => updateZoom(zoom / 1.35)}
+        >
+          −
+        </button>
+        <label>
+          <span>Zoom {zoom.toFixed(1)}×</span>
+          <input
+            type="range"
+            min={1}
+            max={8}
+            step={0.1}
+            value={zoom}
+            onChange={(event) => updateZoom(Number(event.target.value))}
+          />
+        </label>
+        <button
+          aria-label="Zoom in"
+          onClick={() => updateZoom(zoom * 1.35)}
+        >
+          +
+        </button>
       </div>
     </div>
   );
+}
+
+function deterministicCityAngle(id: string, index: number) {
+  let hash = index * 131 + 17;
+  for (let i = 0; i < id.length; i += 1) {
+    hash = Math.imul(hash ^ id.charCodeAt(i), 16777619);
+  }
+  return ((hash >>> 0) % 10_000) / 10_000;
 }
