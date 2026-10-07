@@ -791,15 +791,96 @@ export const useGameStore = create<GameStore>((set, get) => {
       )
     })),
 
+  setNationFocus: (factionId, focus) =>
+    set((state) => ({
+      factions: state.factions.map((faction) =>
+        faction.id === factionId ? { ...faction, focus } : faction
+      ),
+      logs: [
+        `${state.factions.find((faction) => faction.id === factionId)?.name ?? "Nation"} is now prioritizing ${focusLabel(focus)}.`,
+        ...state.logs
+      ].slice(0, 120)
+    })),
+
+  setIntegrationPolicy: (factionId, integrationPolicy) =>
+    set((state) => ({
+      factions: state.factions.map((faction) =>
+        faction.id === factionId
+          ? { ...faction, integrationPolicy }
+          : faction
+      )
+    })),
+
+  seedPopulation: (factionId, rawCount) =>
+    set((state) => {
+      const faction = state.factions.find((item) => item.id === factionId);
+      if (!faction) return state;
+
+      const count = Math.max(2, Math.min(10_000, Math.round(rawCount)));
+      const trackedCount = Math.min(count, 240);
+      const founders: NpcUnit[] = [];
+
+      for (let index = 0; index < trackedCount; index += 1) {
+        const npc = makeNpc(faction, state.catalog, index);
+        npc.populationWeight = count / trackedCount;
+        npc.tags = Array.from(new Set([...(npc.tags ?? []), "Founding Population"]));
+        founders.push(npc);
+      }
+
+      const activeArmy = Math.max(0, Math.round(count * 0.025));
+
+      return {
+        populationSeed: count,
+        npcs: [
+          ...state.npcs.filter((npc) => npc.factionId !== factionId),
+          ...founders
+        ],
+        factions: state.factions.map((item) =>
+          item.id === factionId
+            ? {
+                ...item,
+                population: count,
+                army: activeArmy,
+                military: {
+                  ...(item.military ?? {
+                    army: activeArmy,
+                    navy: 0,
+                    airForce: 0,
+                    reserves: 0,
+                    doctrine: "balanced"
+                  }),
+                  army: activeArmy,
+                  reserves: Math.max(activeArmy, Math.round(count * 0.06))
+                }
+              }
+            : item
+        ),
+        logs: [
+          `Seeded ${faction.name} with ${count.toLocaleString()} simulated people represented by ${trackedCount} tracked founder NPCs.`,
+          ...state.logs
+        ].slice(0, 120)
+      };
+    }),
+
   adjustNation: (factionId, field, amount) =>
     set((state) => ({
       factions: state.factions.map((faction) => {
         if (faction.id !== factionId) return faction;
         if (field === "army") {
-          return { ...faction, army: Math.max(0, Math.min(500, faction.army + amount)) };
+          const army = Math.max(0, Math.min(5_000_000, faction.army + amount));
+          return {
+            ...faction,
+            army,
+            military: faction.military
+              ? { ...faction.military, army }
+              : faction.military
+          };
         }
         if (field === "treasury") {
-          return { ...faction, treasury: Math.max(0, faction.treasury + amount) };
+          return {
+            ...faction,
+            treasury: Math.max(0, faction.treasury + amount)
+          };
         }
         return {
           ...faction,
@@ -821,6 +902,10 @@ export const useGameStore = create<GameStore>((set, get) => {
       worldMode,
       viewMode: "map2d",
       supportedFactionId: null,
+      workspaceMode: "play",
+      era: "modern",
+      conflictScenario: "organic",
+      populationSeed: 100,
       seed: Math.floor(Math.random() * 999_999_999),
       playMode: false,
       tool: "select",
