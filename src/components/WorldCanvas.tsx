@@ -1,5 +1,5 @@
 import { Canvas, type ThreeEvent } from "@react-three/fiber";
-import { Html, OrbitControls, Stars, TransformControls } from "@react-three/drei";
+import { Html, OrbitControls, Stars } from "@react-three/drei";
 import { feature } from "topojson-client";
 import worldAtlas from "world-atlas/countries-110m.json";
 import * as THREE from "three";
@@ -745,59 +745,23 @@ function ObjectVisual({ object }: { object: SceneObject }) {
   );
 }
 
-function EditableObject({ object }: { object: SceneObject }) {
-  const groupRef = useRef<THREE.Group>(null);
-  const selectedObjectId = useGameStore((state) => state.selectedObjectId);
-  const selectObject = useGameStore((state) => state.selectObject);
-  const tool = useGameStore((state) => state.tool);
-  const updateObjectTransform = useGameStore((state) => state.updateObjectTransform);
-  const selected = selectedObjectId === object.id;
-
-  const group = (
-    <group
-      ref={groupRef}
-      position={object.position}
-      rotation={object.rotation}
-      scale={object.scale}
-      onPointerDown={(event) => {
-        event.stopPropagation();
-        selectObject(object.id);
-      }}
-    >
-      <ObjectVisual object={object} />
-    </group>
-  );
-
-  if (!selected || tool === "select" || tool === "territory") return group;
-
-  const mode = tool === "move" ? "translate" : tool;
-
-  return (
-    <TransformControls
-      mode={mode}
-      onObjectChange={() => {
-        const current = groupRef.current;
-        if (!current) return;
-        updateObjectTransform(object.id, {
-          position: [current.position.x, current.position.y, current.position.z],
-          rotation: [current.rotation.x, current.rotation.y, current.rotation.z],
-          scale: [current.scale.x, current.scale.y, current.scale.z]
-        });
-      }}
-    >
-      {group}
-    </TransformControls>
-  );
-}
-
 function SceneObjects() {
   const objects = useGameStore((state) => state.objects);
 
   return (
     <group>
-      {objects.map((object) => (
-        <EditableObject key={object.id} object={object} />
-      ))}
+      {objects
+        .filter((object) => object.kind === "king")
+        .map((object) => (
+          <group
+            key={object.id}
+            position={object.position}
+            rotation={object.rotation}
+            scale={object.scale}
+          >
+            <ObjectVisual object={object} />
+          </group>
+        ))}
     </group>
   );
 }
@@ -853,11 +817,8 @@ function WorldScene() {
 }
 
 export function WorldCanvas() {
-  const selectObject = useGameStore((state) => state.selectObject);
-
   return (
     <Canvas
-      onPointerMissed={() => selectObject(null)}
       shadows
       dpr={[1, 1.6]}
       camera={{
@@ -869,5 +830,344 @@ export function WorldCanvas() {
     >
       <WorldScene />
     </Canvas>
+  );
+}
+
+
+const FLAT_W = 1000;
+const FLAT_H = 500;
+
+function flatProject(lat: number, lon: number): [number, number] {
+  return [((lon + 180) / 360) * FLAT_W, ((90 - lat) / 180) * FLAT_H];
+}
+
+function flatRingPath(ring: number[][]) {
+  if (!ring.length) return "";
+  const lons = ring.map((point) => point[0]);
+  const unwrap = Math.max(...lons) - Math.min(...lons) > 180;
+
+  return (
+    ring
+      .map(([lon, lat], index) => {
+        const fixedLon = unwrap && lon < 0 ? lon + 360 : lon;
+        const x = ((fixedLon + 180) / 360) * FLAT_W;
+        const y = ((90 - lat) / 180) * FLAT_H;
+        return `${index ? "L" : "M"}${x.toFixed(1)},${y.toFixed(1)}`;
+      })
+      .join(" ") + " Z"
+  );
+}
+
+function flatFeaturePaths(item: GeoFeature) {
+  const shape = item.geometry;
+  if (!shape) return [] as string[];
+  const polygonPath = (polygon: number[][][]) =>
+    polygon.map(flatRingPath).join(" ");
+
+  return shape.type === "Polygon"
+    ? [polygonPath(shape.coordinates as number[][][])]
+    : (shape.coordinates as number[][][][]).map(polygonPath);
+}
+
+function flatTerrainColor(
+  lat: number,
+  lon: number,
+  seed: number,
+  sandbox: boolean
+) {
+  const value =
+    Math.sin((lon + seed * 0.01) * 0.075) +
+    Math.cos((lat - seed * 0.008) * 0.11) +
+    Math.sin((lon + lat) * 0.19 + seed * 0.003) * 0.55;
+
+  if (value < -0.5) return sandbox ? "#2196d3" : "#185577";
+  if (value < -0.12) return "#e0c16a";
+  if (value < 0.65) return sandbox ? "#5dbb4b" : "#4b8150";
+  if (value < 1.15) return "#7d846f";
+  return "#e8edf2";
+}
+
+export function Map2D() {
+  const svgRef = useRef<SVGSVGElement>(null);
+  const worldMode = useGameStore((state) => state.worldMode);
+  const seed = useGameStore((state) => state.seed);
+  const factions = useGameStore((state) => state.factions);
+  const npcs = useGameStore((state) => state.npcs);
+  const territories = useGameStore((state) => state.territories);
+  const draft = useGameStore((state) => state.territoryDraft);
+  const tool = useGameStore((state) => state.tool);
+  const selectedFactionId = useGameStore((state) => state.selectedFactionId);
+  const supportedFactionId = useGameStore((state) => state.supportedFactionId);
+  const selectFaction = useGameStore((state) => state.selectFaction);
+  const selectTerritory = useGameStore((state) => state.selectTerritory);
+  const addTerritoryPoint = useGameStore((state) => state.addTerritoryPoint);
+
+  const features = useMemo(countryFeatures, []);
+
+  const byNumeric = useMemo(() => {
+    const map = new Map<string, string>();
+    factions.forEach((faction) => {
+      if (faction.numericCode) {
+        map.set(String(Number(faction.numericCode)), faction.id);
+      }
+    });
+    return map;
+  }, [factions]);
+
+  const byId = useMemo(
+    () => new Map(factions.map((faction) => [faction.id, faction])),
+    [factions]
+  );
+
+  const wars = useMemo(() => {
+    const seen = new Set<string>();
+    const result: Array<[string, string]> = [];
+
+    factions.forEach((faction) => {
+      Object.entries(faction.relations).forEach(([otherId, relation]) => {
+        if (relation !== "war") return;
+        const key = [faction.id, otherId].sort().join(":");
+        if (seen.has(key)) return;
+        seen.add(key);
+        result.push([faction.id, otherId]);
+      });
+    });
+
+    return result;
+  }, [factions]);
+
+  const terrain = useMemo(() => {
+    if (worldMode === "earth") return [];
+    const cells: Array<{ x: number; y: number; fill: string }> = [];
+    for (let y = 0; y < 27; y += 1) {
+      for (let x = 0; x < 54; x += 1) {
+        const lon = (x / 54) * 360 - 180;
+        const lat = 90 - (y / 27) * 180;
+        cells.push({
+          x: (x / 54) * FLAT_W,
+          y: (y / 27) * FLAT_H,
+          fill: flatTerrainColor(lat, lon, seed, worldMode === "sandbox")
+        });
+      }
+    }
+    return cells;
+  }, [seed, worldMode]);
+
+  const addPoint = (clientX: number, clientY: number) => {
+    const svg = svgRef.current;
+    if (!svg) return;
+    const rect = svg.getBoundingClientRect();
+    if (!rect.width || !rect.height) return;
+    const x = ((clientX - rect.left) / rect.width) * FLAT_W;
+    const y = ((clientY - rect.top) / rect.height) * FLAT_H;
+    addTerritoryPoint([
+      90 - (y / FLAT_H) * 180,
+      (x / FLAT_W) * 360 - 180
+    ]);
+  };
+
+  return (
+    <div className="map2d-shell">
+      <svg
+        ref={svgRef}
+        className={tool === "territory" ? "map2d drawing" : "map2d"}
+        viewBox="0 0 1000 500"
+        onPointerDown={(event) => {
+          if (tool === "territory") addPoint(event.clientX, event.clientY);
+        }}
+      >
+        <rect width={FLAT_W} height={FLAT_H} fill="#123d5a" />
+
+        {worldMode === "earth"
+          ? features.map((item, featureIndex) => {
+              const numeric = item.id == null ? "" : String(Number(item.id));
+              const factionId = byNumeric.get(numeric);
+              const faction = factionId ? byId.get(factionId) : undefined;
+              if (!faction) return null;
+
+              const controller = faction.controlledBy
+                ? byId.get(faction.controlledBy)
+                : faction;
+              const selected = selectedFactionId === faction.id;
+              const supported = supportedFactionId === faction.id;
+
+              return (
+                <g key={`${numeric}-${featureIndex}`}>
+                  {flatFeaturePaths(item).flatMap((path, pathIndex) =>
+                    [0, -FLAT_W].map((shift) => (
+                      <path
+                        key={`${pathIndex}-${shift}`}
+                        d={path}
+                        transform={shift ? `translate(${shift} 0)` : undefined}
+                        fill={controller?.color ?? faction.color}
+                        fillOpacity={selected ? 1 : 0.84}
+                        fillRule="evenodd"
+                        stroke={
+                          supported
+                            ? "#ffd166"
+                            : selected
+                              ? "#ffffff"
+                              : "#172331"
+                        }
+                        strokeWidth={supported ? 2.5 : selected ? 1.8 : 0.65}
+                        onPointerDown={(event) => {
+                          event.stopPropagation();
+                          if (tool === "territory") addPoint(event.clientX, event.clientY);
+                          else selectFaction(faction.id);
+                        }}
+                      />
+                    ))
+                  )}
+                </g>
+              );
+            })
+          : terrain.map((cell, index) => (
+              <rect
+                key={index}
+                x={cell.x}
+                y={cell.y}
+                width={FLAT_W / 54 + 1}
+                height={FLAT_H / 27 + 1}
+                fill={cell.fill}
+              />
+            ))}
+
+        {wars.map(([aId, bId]) => {
+          const a = byId.get(aId);
+          const b = byId.get(bId);
+          if (!a || !b) return null;
+          const [x1, y1] = flatProject(a.lat, a.lon);
+          let [x2, y2] = flatProject(b.lat, b.lon);
+          if (Math.abs(x2 - x1) > FLAT_W / 2) {
+            x2 += x2 > x1 ? -FLAT_W : FLAT_W;
+          }
+
+          return (
+            <line
+              key={`${aId}-${bId}`}
+              x1={x1}
+              y1={y1}
+              x2={x2}
+              y2={y2}
+              className="war-line"
+            />
+          );
+        })}
+
+        {territories.map((territory) => {
+          if (territory.points.length < 3) return null;
+          const path =
+            territory.points
+              .map(([lat, lon], index) => {
+                const [x, y] = flatProject(lat, lon);
+                return `${index ? "L" : "M"}${x.toFixed(1)},${y.toFixed(1)}`;
+              })
+              .join(" ") + " Z";
+
+          return (
+            <path
+              key={territory.id}
+              d={path}
+              fill={territory.color}
+              fillOpacity={0.8}
+              stroke="#ffffff"
+              strokeWidth={0.8}
+              onPointerDown={(event) => {
+                event.stopPropagation();
+                if (tool === "territory") addPoint(event.clientX, event.clientY);
+                else selectTerritory(territory.id);
+              }}
+            />
+          );
+        })}
+
+        {draft.length > 0 && (
+          <polyline
+            points={draft
+              .map(([lat, lon]) => flatProject(lat, lon).join(","))
+              .join(" ")}
+            fill="none"
+            stroke="#ffffff"
+            strokeWidth={2}
+          />
+        )}
+
+        {npcs
+          .filter((npc) => npc.state !== "dead")
+          .slice(0, 900)
+          .map((npc) => {
+            const faction = byId.get(npc.factionId);
+            const [x, y] = flatProject(npc.lat, npc.lon);
+            const fighting = npc.state === "fighting";
+
+            return (
+              <g key={npc.id}>
+                <circle
+                  cx={x}
+                  cy={y}
+                  r={fighting ? 3.2 : 2.2}
+                  fill={faction?.color ?? "#ffffff"}
+                  stroke={
+                    fighting
+                      ? "#ff3f4b"
+                      : supportedFactionId === npc.factionId
+                        ? "#ffd166"
+                        : "#071019"
+                  }
+                  strokeWidth={fighting ? 1.8 : 0.8}
+                />
+                {fighting && (
+                  <circle
+                    cx={x}
+                    cy={y}
+                    r={6}
+                    fill="none"
+                    stroke="#ff6b6b"
+                    strokeWidth={1.1}
+                    className="battle-pulse"
+                  />
+                )}
+              </g>
+            );
+          })}
+
+        {supportedFactionId &&
+          (() => {
+            const faction = byId.get(supportedFactionId);
+            if (!faction) return null;
+            const [x, y] = flatProject(faction.lat, faction.lon);
+            return (
+              <g>
+                <circle
+                  cx={x}
+                  cy={y}
+                  r={9}
+                  fill="none"
+                  stroke="#ffd166"
+                  strokeWidth={2}
+                />
+                <text
+                  x={x}
+                  y={y - 11}
+                  textAnchor="middle"
+                  fill="#ffd166"
+                  fontSize={11}
+                >
+                  ★
+                </text>
+              </g>
+            );
+          })()}
+      </svg>
+
+      <div className="map2d-hud">
+        <strong>2D Battle Map</strong>
+        <span>
+          {tool === "territory"
+            ? "Click points to draw a territory."
+            : "Click a nation. NPC dots march and fight here live."}
+        </span>
+      </div>
+    </div>
   );
 }

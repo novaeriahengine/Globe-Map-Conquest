@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
-import { CloudPanel } from "./components/CloudPanel";
 import { CountryPanel } from "./components/CountryPanel";
 import { Inspector } from "./components/Inspector";
 import { OnlinePanel } from "./components/OnlinePanel";
+import { SaveLoadPanel } from "./components/SaveLoadPanel";
 import { Toolbar } from "./components/Toolbar";
-import { WorldCanvas } from "./components/WorldCanvas";
+import { Map2D, WorldCanvas } from "./components/WorldCanvas";
 import { WorldPicker } from "./components/WorldPicker";
 import { useGameStore } from "./store/useGameStore";
 
@@ -13,6 +13,7 @@ export default function App() {
   const playMode = useGameStore((state) => state.playMode);
   const simulateTick = useGameStore((state) => state.simulateTick);
   const worldMode = useGameStore((state) => state.worldMode);
+  const viewMode = useGameStore((state) => state.viewMode);
   const worldName = useGameStore((state) => state.worldName);
 
   useEffect(() => {
@@ -20,7 +21,7 @@ export default function App() {
 
     const timer = window.setInterval(() => {
       simulateTick();
-    }, 900);
+    }, 700);
 
     return () => window.clearInterval(timer);
   }, [playMode, simulateTick, workspaceOpen]);
@@ -33,11 +34,11 @@ export default function App() {
           <div>
             <strong>Globe Map Conquest</strong>
             <span>
-              {worldName} ·{" "}
+              {worldName} · {viewMode === "map2d" ? "2D Battle Map" : "3D Globe"} ·{" "}
               {worldMode === "earth"
                 ? "Earth"
                 : worldMode === "sandbox"
-                  ? "WorldBox Sandbox"
+                  ? "Sandbox"
                   : "Procedural Planet"}
             </span>
           </div>
@@ -45,10 +46,10 @@ export default function App() {
 
         <div className="topbar-actions">
           <div className="topbar-note">
-            Firestore world memory · living NPC wars · editable borders
+            Living nations · diplomacy · war · Firestore saves
           </div>
           <button className="button compact" onClick={() => setWorkspaceOpen(false)}>
-            Worlds
+            Saves / Worlds
           </button>
         </div>
       </header>
@@ -59,16 +60,18 @@ export default function App() {
 
           <div className="workspace">
             <aside className="left-sidebar">
-              <CloudPanel />
+              <SaveLoadPanel />
               <OnlinePanel />
               <CountryPanel />
             </aside>
 
-            <section className="viewport">
-              <WorldCanvas />
+            <section className={viewMode === "map2d" ? "viewport viewport-2d" : "viewport"}>
+              {viewMode === "map2d" ? <Map2D /> : <WorldCanvas />}
+
               <div className="viewport-hint">
-                Orbit: drag · Zoom: wheel · Click colored land: country · Draw Territory:
-                click 3+ points, then Finish
+                {viewMode === "map2d"
+                  ? "2D mode: click nations · watch NPC armies move and fight · select a nation to support it"
+                  : "3D mode: rotate globe · zoom · click a country · switch to 2D for the battle view"}
               </div>
 
               {playMode && (
