@@ -21,7 +21,9 @@
     "world-atlas": "^2.0.2",
     "world-countries": "^5.0.0",
     "zustand": "^5.0.3",
-    "ws": "^8.18.0"
+    "ws": "^8.18.0",
+    "firebase": "^12.4.0",
+    "polygon-clipping": "^0.15.7"
   },
   "devDependencies": {
     "@types/react": "^18.3.12",
