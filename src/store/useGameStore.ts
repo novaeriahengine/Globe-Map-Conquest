@@ -3,6 +3,7 @@ import { DEFAULT_CATALOG, DEFAULT_QUESTS } from "../data/catalogDefaults";
 import { createInitialFactions } from "../game/countries";
 import { latLonToXYZ, seededColor } from "../game/geo";
 import type {
+  CivilizationRecord,
   EditorTool,
   Faction,
   FlagPresetId,
@@ -34,6 +35,7 @@ interface GameStore {
   tool: EditorTool;
   objects: SceneObject[];
   factions: Faction[];
+  civilizations: CivilizationRecord[];
   territories: TerritoryPatch[];
   territoryDraft: LatLon[];
   selectedTerritoryId: string | null;
@@ -224,6 +226,53 @@ function choose<T>(items: T[], fallback: T, seed = Math.random()) {
   return items[index] ?? fallback;
 }
 
+
+function civilizationAdjective(name: string) {
+  if (name.endsWith("y")) return `${name.slice(0, -1)}ian`;
+  if (name.endsWith("a")) return `${name}n`;
+  if (name.endsWith("land")) return `${name.slice(0, -4)}ish`;
+  return `${name}ian`;
+}
+
+function civilizationsFromFactions(
+  factions: Faction[],
+  tick = 0
+): CivilizationRecord[] {
+  const seen = new Set<string>();
+  const records: CivilizationRecord[] = [];
+
+  for (const faction of factions) {
+    const id = faction.civilizationId || `civ-${faction.id}`;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    records.push({
+      id,
+      name: faction.name,
+      adjective: civilizationAdjective(faction.name),
+      foundingTick: tick,
+      extinctionTick: faction.controlledBy ? tick : null,
+      homeland: [faction.lat, faction.lon],
+      color: faction.color,
+      flagPresetId: faction.flagPresetId,
+      legacyNames: [faction.name],
+      revivalCount: faction.revivalCount ?? 0,
+      history: [`${faction.name} civilization entered recorded history at tick ${tick}.`]
+    });
+  }
+
+  return records;
+}
+
+function normalizeFactionCivilization(faction: Faction): Faction {
+  return {
+    ...faction,
+    effects: faction.effects ?? [],
+    civilizationId: faction.civilizationId || `civ-${faction.id}`,
+    occupationStartedTick: faction.occupationStartedTick ?? null,
+    revivalCount: faction.revivalCount ?? 0
+  };
+}
+
 function traitStats(traits: string[]): TraitStats {
   const stats: TraitStats = {
     aggression: 48,
@@ -271,6 +320,8 @@ function makeNpc(
   return {
     id: makeId("npc"),
     factionId: faction.id,
+    civilizationId: faction.civilizationId,
+    loyalty: Math.max(35, Math.min(100, 55 + Math.round(stats.courage * 0.25 + stats.discipline * 0.2))),
     name: `${first} ${last}`,
     species: choose(catalog.species, "Human", (seed * 7.03 + 0.12) % 1),
     traits,
@@ -376,30 +427,49 @@ function questProgress(
 
 function upgradeSnapshot(snapshot: SavedWorld | LegacySavedWorldV1): SavedWorld {
   if (snapshot.version === 2) {
+    const factions = snapshot.factions.map(normalizeFactionCivilization);
+    const civilizations =
+      snapshot.civilizations?.length
+        ? snapshot.civilizations
+        : civilizationsFromFactions(factions, snapshot.tick);
+
     return {
       ...snapshot,
-      viewMode: snapshot.viewMode ?? "globe3d",
+      viewMode: snapshot.viewMode ?? "map2d",
       supportedFactionId: snapshot.supportedFactionId ?? null,
-      factions: snapshot.factions.map((faction) => ({
-        ...faction,
-        effects: faction.effects ?? []
-      }))
+      factions,
+      civilizations,
+      npcs: snapshot.npcs.map((npc) => {
+        const faction = factions.find((item) => item.id === npc.factionId);
+        return {
+          ...npc,
+          civilizationId:
+            npc.civilizationId ?? faction?.civilizationId ?? `civ-${npc.factionId}`,
+          loyalty: npc.loyalty ?? 70
+        };
+      })
     };
   }
+
+  const factions = snapshot.factions.map((faction) =>
+    normalizeFactionCivilization({
+      ...faction,
+      accentColor: seededColor(faction.id + "-accent"),
+      effects: [],
+      civilizationId: `civ-${faction.id}`
+    } as Faction)
+  );
 
   return {
     version: 2,
     worldName: snapshot.worldName,
     worldMode: snapshot.worldMode,
-    viewMode: "globe3d",
+    viewMode: "map2d",
     supportedFactionId: null,
     seed: snapshot.seed,
     objects: snapshot.objects,
-    factions: snapshot.factions.map((faction) => ({
-      ...faction,
-      accentColor: seededColor(faction.id + "-accent"),
-      effects: []
-    })),
+    factions,
+    civilizations: civilizationsFromFactions(factions, snapshot.tick),
     territories: [],
     npcs: [],
     quests: DEFAULT_QUESTS.map((quest) => ({ ...quest })),
@@ -408,16 +478,19 @@ function upgradeSnapshot(snapshot: SavedWorld | LegacySavedWorldV1): SavedWorld 
   };
 }
 
-export const useGameStore = create<GameStore>((set, get) => ({
+export const useGameStore = create<GameStore>((set, get) => {
+  const initialFactions = createInitialFactions();
+  return {
   worldName: "New Globe World",
   worldMode: "earth",
-  viewMode: "globe3d",
+  viewMode: "map2d",
   supportedFactionId: null,
   seed: 48271,
   playMode: false,
   tool: "select",
   objects: [],
-  factions: createInitialFactions(),
+  factions: initialFactions,
+  civilizations: civilizationsFromFactions(initialFactions),
   territories: [],
   territoryDraft: [],
   selectedTerritoryId: null,
@@ -502,7 +575,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
       })
     })),
 
-  createWorld: (worldMode, name) =>
+  createWorld: (worldMode, name) => {
+    const factions = createInitialFactions();
     set({
       worldName:
         name ??
@@ -512,13 +586,14 @@ export const useGameStore = create<GameStore>((set, get) => ({
             ? "WorldBox Sandbox"
             : "Procedural Planet"),
       worldMode,
-      viewMode: "globe3d",
+      viewMode: "map2d",
       supportedFactionId: null,
       seed: Math.floor(Math.random() * 999_999_999),
       playMode: false,
       tool: "select",
       objects: [],
-      factions: createInitialFactions(),
+      factions,
+      civilizations: civilizationsFromFactions(factions),
       territories: [],
       territoryDraft: [],
       selectedTerritoryId: null,
@@ -527,9 +602,10 @@ export const useGameStore = create<GameStore>((set, get) => ({
       selectedObjectId: null,
       selectedFactionId: "USA",
       selectedSubdivisionId: null,
-      logs: [`Created ${worldMode} world.`],
+      logs: [`Created ${worldMode} world in 2D battle mode.`],
       tick: 0
-    }),
+    });
+  },
 
   setSeed: (seed) => set({ seed: Math.max(0, Math.floor(seed || 0)) }),
 
@@ -799,6 +875,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
         territory.points.reduce((sum, point) => sum + point[1], 0) /
         territory.points.length;
 
+      const civilizationId = makeId("civ");
       const faction: Faction = {
         id: factionId,
         name: nationName,
@@ -818,11 +895,29 @@ export const useGameStore = create<GameStore>((set, get) => ({
         flagPresetId: "sunrise",
         allianceName: null,
         relations: {},
-        effects: []
+        effects: [],
+        civilizationId,
+        occupationStartedTick: null,
+        revivalCount: 0
+      };
+
+      const civilization: CivilizationRecord = {
+        id: civilizationId,
+        name: nationName,
+        adjective: civilizationAdjective(nationName),
+        foundingTick: state.tick,
+        extinctionTick: null,
+        homeland: [lat, lon],
+        color: territory.color,
+        flagPresetId: "sunrise",
+        legacyNames: [nationName],
+        revivalCount: 0,
+        history: [`${nationName} was founded from ${territory.name} at tick ${state.tick}.`]
       };
 
       return {
         factions: [...state.factions, faction],
+        civilizations: [...state.civilizations, civilization],
         territories: state.territories.map((item) =>
           item.id === id
             ? { ...item, ownerFactionId: factionId, name: territory.name }
@@ -1100,6 +1195,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       seed: state.seed,
       objects: state.objects,
       factions: state.factions,
+      civilizations: state.civilizations,
       territories: state.territories,
       npcs: state.npcs,
       quests: state.quests,
@@ -1119,6 +1215,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       seed: snapshot.seed,
       objects: snapshot.objects,
       factions: snapshot.factions,
+      civilizations: snapshot.civilizations,
       territories: snapshot.territories,
       territoryDraft: [],
       selectedTerritoryId: null,
@@ -1162,17 +1259,19 @@ export const useGameStore = create<GameStore>((set, get) => ({
     }
   },
 
-  resetWorld: () =>
+  resetWorld: () => {
+    const factions = createInitialFactions();
     set({
       worldName: "New Globe World",
       worldMode: "earth",
-      viewMode: "globe3d",
+      viewMode: "map2d",
       supportedFactionId: null,
       seed: 48271,
       playMode: false,
       tool: "select",
       objects: [],
-      factions: createInitialFactions(),
+      factions,
+      civilizations: civilizationsFromFactions(factions),
       territories: [],
       territoryDraft: [],
       selectedTerritoryId: null,
@@ -1181,7 +1280,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
       selectedObjectId: null,
       selectedFactionId: "USA",
       selectedSubdivisionId: null,
-      logs: ["World reset."],
+      logs: ["World reset in 2D battle mode."],
       tick: 0
-    })
-}));
+    });
+  }
+  };
+});
