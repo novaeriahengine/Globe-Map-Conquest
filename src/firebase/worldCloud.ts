@@ -1,5 +1,6 @@
 import {
   collection,
+  deleteDoc,
   doc,
   getDoc,
   getDocs,
@@ -20,6 +21,16 @@ export interface CloudWorldSummary {
   name: string;
   mode: string;
   seed: number;
+  tick: number;
+  updatedAt: number | null;
+}
+
+export interface SaveSlotSummary {
+  id: string;
+  name: string;
+  worldName: string;
+  mode: string;
+  viewMode: string;
   tick: number;
   updatedAt: number | null;
 }
@@ -150,3 +161,80 @@ export async function ensureDefaultCatalog(): Promise<NameCatalog> {
 
   return DEFAULT_CATALOG;
 }
+
+function cleanSaveId(input: string) {
+  const cleaned = input
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 54);
+  return cleaned || "save";
+}
+
+export async function saveGameSlot(
+  saveName: string,
+  snapshot: SavedWorld
+): Promise<string> {
+  const user = await ensureFirebaseSession();
+  const base = cleanSaveId(saveName);
+  const id = `${base}-${Date.now().toString(36)}`;
+  const saveRef = doc(firestore, "users", user.uid, "saves", id);
+  const jsonSnapshot = JSON.parse(JSON.stringify(snapshot)) as SavedWorld;
+
+  await setDoc(saveRef, {
+    name: saveName.trim() || "New Save",
+    worldName: jsonSnapshot.worldName,
+    mode: jsonSnapshot.worldMode,
+    viewMode: jsonSnapshot.viewMode ?? "globe3d",
+    tick: jsonSnapshot.tick,
+    snapshot: jsonSnapshot,
+    ownerUid: user.uid,
+    updatedAt: serverTimestamp()
+  });
+
+  return id;
+}
+
+export async function listSaveSlots(): Promise<SaveSlotSummary[]> {
+  const user = await ensureFirebaseSession();
+  const savesRef = collection(firestore, "users", user.uid, "saves");
+  const results = await getDocs(
+    query(savesRef, orderBy("updatedAt", "desc"), limit(50))
+  );
+
+  return results.docs.map((item) => {
+    const data = item.data();
+    const millis =
+      data.updatedAt && typeof data.updatedAt.toMillis === "function"
+        ? data.updatedAt.toMillis()
+        : null;
+
+    return {
+      id: item.id,
+      name: String(data.name ?? item.id),
+      worldName: String(data.worldName ?? "World"),
+      mode: String(data.mode ?? "earth"),
+      viewMode: String(data.viewMode ?? "globe3d"),
+      tick: Number(data.tick ?? 0),
+      updatedAt: millis
+    };
+  });
+}
+
+export async function loadSaveSlot(
+  saveId: string
+): Promise<SavedWorld | null> {
+  const user = await ensureFirebaseSession();
+  const saveRef = doc(firestore, "users", user.uid, "saves", saveId);
+  const result = await getDoc(saveRef);
+  if (!result.exists()) return null;
+  return (result.data().snapshot ?? null) as SavedWorld | null;
+}
+
+export async function deleteSaveSlot(saveId: string): Promise<void> {
+  const user = await ensureFirebaseSession();
+  const saveRef = doc(firestore, "users", user.uid, "saves", saveId);
+  await deleteDoc(saveRef);
+}
+
