@@ -10,6 +10,9 @@ export function TerritoryPanel() {
   const renameTerritory = useGameStore((state) => state.renameTerritory);
   const recolorTerritory = useGameStore((state) => state.recolorTerritory);
   const deleteTerritory = useGameStore((state) => state.deleteTerritory);
+  const promoteTerritoryToFaction = useGameStore(
+    (state) => state.promoteTerritoryToFaction
+  );
 
   const selected =
     territories.find((territory) => territory.id === selectedTerritoryId) ?? null;
@@ -97,6 +100,15 @@ export function TerritoryPanel() {
             <span>Owner: <strong>{owner?.name ?? "Unclaimed"}</strong></span>
             <span>Vertices: <strong>{selected.points.length}</strong></span>
           </div>
+
+          {!selected.ownerFactionId?.startsWith("nation-") && (
+            <button
+              className="button success full"
+              onClick={() => promoteTerritoryToFaction(selected.id)}
+            >
+              Declare independent country
+            </button>
+          )}
 
           <button
             className="button danger full"
