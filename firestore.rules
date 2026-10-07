@@ -19,9 +19,19 @@ service cloud.firestore {
       // A world can only be created/updated by its owner.
       allow create: if signedIn() &&
         request.resource.data.ownerUid == request.auth.uid;
-      allow update, delete: if signedIn() &&
-        resource.data.ownerUid == request.auth.uid &&
-        request.resource.data.ownerUid == resource.data.ownerUid;
+      allow update: if signedIn() && (
+        (
+          !("ownerUid" in resource.data) &&
+          request.resource.data.ownerUid == request.auth.uid
+        ) ||
+        (
+          resource.data.ownerUid == request.auth.uid &&
+          request.resource.data.ownerUid == resource.data.ownerUid
+        )
+      );
+
+      allow delete: if signedIn() &&
+        resource.data.ownerUid == request.auth.uid;
 
       match /{document=**} {
         allow read: if true;
