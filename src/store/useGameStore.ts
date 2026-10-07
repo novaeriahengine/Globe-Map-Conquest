@@ -72,6 +72,8 @@ interface GameStore {
   renameTerritory: (id: string, name: string) => void;
   recolorTerritory: (id: string, color: string) => void;
   deleteTerritory: (id: string) => void;
+  promoteTerritoryToFaction: (id: string, name?: string) => void;
+  startWorldWar: () => void;
   simulateTick: () => void;
   exportWorld: () => SavedWorld;
   importWorld: (snapshot: SavedWorld | LegacySavedWorldV1, source?: string) => void;
@@ -600,6 +602,116 @@ export const useGameStore = create<GameStore>((set, get) => ({
       selectedTerritoryId:
         state.selectedTerritoryId === id ? null : state.selectedTerritoryId
     })),
+
+  promoteTerritoryToFaction: (id, name) =>
+    set((state) => {
+      const territory = state.territories.find((item) => item.id === id);
+      if (!territory || territory.points.length < 3) return state;
+
+      const nationName =
+        name?.trim() ||
+        choose(
+          state.catalog.countryNames,
+          `New Nation ${state.factions.length + 1}`,
+          ((state.factions.length + state.territories.length) * 0.217) % 1
+        );
+
+      const factionId = makeId("nation");
+      const lat =
+        territory.points.reduce((sum, point) => sum + point[0], 0) /
+        territory.points.length;
+      const lon =
+        territory.points.reduce((sum, point) => sum + point[1], 0) /
+        territory.points.length;
+
+      const faction: Faction = {
+        id: factionId,
+        name: nationName,
+        cca2: "--",
+        cca3: "NEW",
+        emoji: "🏳️",
+        capital: territory.name,
+        lat,
+        lon,
+        color: territory.color,
+        accentColor: seededColor(factionId + "-accent"),
+        army: 42,
+        treasury: 420,
+        stability: 72,
+        controlledBy: null,
+        rulerName: null,
+        flagPresetId: "sunrise",
+        allianceName: null,
+        relations: {}
+      };
+
+      return {
+        factions: [...state.factions, faction],
+        territories: state.territories.map((item) =>
+          item.id === id
+            ? { ...item, ownerFactionId: factionId, name: territory.name }
+            : item
+        ),
+        selectedFactionId: factionId,
+        logs: [
+          `${nationName} declared independence from ${state.factions.find((item) => item.id === territory.parentFactionId)?.name ?? "its parent territory"}.`,
+          ...state.logs
+        ].slice(0, 120)
+      };
+    }),
+
+  startWorldWar: () =>
+    set((state) => {
+      const candidates = [...state.factions]
+        .filter((faction) => !faction.controlledBy)
+        .sort((a, b) => b.army + b.treasury * 0.03 - (a.army + a.treasury * 0.03))
+        .slice(0, 40);
+
+      if (candidates.length < 2) return state;
+
+      const teamA = candidates.filter((_, index) => index % 2 === 0);
+      const teamB = candidates.filter((_, index) => index % 2 === 1);
+      const teamAIds = new Set(teamA.map((faction) => faction.id));
+      const teamBIds = new Set(teamB.map((faction) => faction.id));
+
+      let npcs = state.npcs;
+      for (const faction of candidates) {
+        npcs = ensureSquad(npcs, faction, state.catalog, 6);
+      }
+
+      const factions = state.factions.map((faction) => {
+        if (!teamAIds.has(faction.id) && !teamBIds.has(faction.id)) return faction;
+
+        const enemies = teamAIds.has(faction.id) ? teamB : teamA;
+        const allies = teamAIds.has(faction.id) ? teamA : teamB;
+        const relations = { ...faction.relations };
+
+        for (const enemy of enemies) {
+          relations[enemy.id] = "war";
+        }
+        for (const ally of allies) {
+          if (ally.id !== faction.id) relations[ally.id] = "allied";
+        }
+
+        return {
+          ...faction,
+          allianceName: teamAIds.has(faction.id)
+            ? "Blue World Coalition"
+            : "Golden World Coalition",
+          relations
+        };
+      });
+
+      return {
+        factions,
+        npcs,
+        playMode: true,
+        logs: [
+          `World War started: ${teamA.length} nations vs ${teamB.length} nations.`,
+          ...state.logs
+        ].slice(0, 120)
+      };
+    }),
 
   simulateTick: () =>
     set((state) => {
