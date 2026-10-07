@@ -14,6 +14,14 @@ export function latLonToXYZ(lat: number, lon: number, radius = GLOBE_RADIUS): Ve
   return [x, y, z];
 }
 
+export function xyzToLatLon(x: number, y: number, z: number): [number, number] {
+  const radius = Math.sqrt(x * x + y * y + z * z) || 1;
+  const lat = 90 - THREE.MathUtils.radToDeg(Math.acos(y / radius));
+  const lon = THREE.MathUtils.radToDeg(Math.atan2(z, -x)) - 180;
+  const normalizedLon = ((lon + 540) % 360) - 180;
+  return [lat, normalizedLon];
+}
+
 export function seededColor(key: string): string {
   let hash = 0;
   for (let i = 0; i < key.length; i += 1) {
