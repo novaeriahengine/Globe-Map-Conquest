@@ -40,6 +40,9 @@ export async function saveWorldToCloud(
 ): Promise<string> {
   await ensureFirebaseSession();
   const id = cleanWorldId(worldId);
+  // Firestore rejects undefined values. Round-trip through JSON so the saved
+  // document is a clean JSON-like snapshot and optional fields are omitted.
+  const jsonSnapshot = JSON.parse(JSON.stringify(snapshot)) as SavedWorld;
   const worldRef = doc(firestore, "worlds", id);
   const stateRef = doc(firestore, "worlds", id, "state", "current");
 
@@ -47,11 +50,11 @@ export async function saveWorldToCloud(
     setDoc(
       worldRef,
       {
-        name: snapshot.worldName,
-        mode: snapshot.worldMode,
-        seed: snapshot.seed,
-        tick: snapshot.tick,
-        version: snapshot.version,
+        name: jsonSnapshot.worldName,
+        mode: jsonSnapshot.worldMode,
+        seed: jsonSnapshot.seed,
+        tick: jsonSnapshot.tick,
+        version: jsonSnapshot.version,
         updatedAt: serverTimestamp()
       },
       { merge: true }
@@ -59,7 +62,7 @@ export async function saveWorldToCloud(
     setDoc(
       stateRef,
       {
-        snapshot,
+        snapshot: jsonSnapshot,
         updatedAt: serverTimestamp()
       },
       { merge: true }
