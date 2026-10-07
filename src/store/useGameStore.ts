@@ -45,6 +45,8 @@ interface GameStore {
   setRelation: (aId: string, bId: string, relation: Relation) => void;
   spawnKing: (factionId: string) => void;
   simulateTick: () => void;
+  exportWorld: () => SavedWorld;
+  importWorld: (snapshot: SavedWorld, source?: string) => void;
   saveLocal: () => void;
   loadLocal: () => boolean;
   resetWorld: () => void;
@@ -280,9 +282,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
       };
     }),
 
-  saveLocal: () => {
+  exportWorld: () => {
     const state = get();
-    const snapshot: SavedWorld = {
+    return {
       version: 1,
       worldName: state.worldName,
       worldMode: state.worldMode,
@@ -292,6 +294,28 @@ export const useGameStore = create<GameStore>((set, get) => ({
       logs: state.logs,
       tick: state.tick
     };
+  },
+
+  importWorld: (snapshot, source = "World synchronized.") => {
+    if (snapshot.version !== 1) return;
+    set((state) => ({
+      worldName: snapshot.worldName,
+      worldMode: snapshot.worldMode,
+      seed: snapshot.seed,
+      objects: snapshot.objects,
+      factions: snapshot.factions,
+      logs: [source, ...snapshot.logs].slice(0, 80),
+      tick: snapshot.tick,
+      selectedObjectId: null,
+      selectedFactionId:
+        state.selectedFactionId && snapshot.factions.some((faction) => faction.id === state.selectedFactionId)
+          ? state.selectedFactionId
+          : snapshot.factions[0]?.id ?? null
+    }));
+  },
+
+  saveLocal: () => {
+    const snapshot = get().exportWorld();
     localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot));
     set((current) => ({
       logs: ["World saved in this browser.", ...current.logs].slice(0, 80)
@@ -304,18 +328,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
     try {
       const snapshot = JSON.parse(raw) as SavedWorld;
       if (snapshot.version !== 1) return false;
-      set({
-        worldName: snapshot.worldName,
-        worldMode: snapshot.worldMode,
-        seed: snapshot.seed,
-        objects: snapshot.objects,
-        factions: snapshot.factions,
-        logs: ["Saved world loaded.", ...snapshot.logs].slice(0, 80),
-        tick: snapshot.tick,
-        selectedObjectId: null,
-        selectedFactionId: snapshot.factions[0]?.id ?? null,
-        playMode: false
-      });
+      get().importWorld(snapshot, "Saved world loaded.");
+      set({ playMode: false });
       return true;
     } catch {
       return false;
