@@ -451,6 +451,9 @@ function makeNpc(
   const stats = traitStats(traits);
   const maxHp = 78 + Math.round(stats.courage * 0.42 + stats.discipline * 0.18);
 
+  const sex = ordinal % 2 === 0 ? "female" : "male";
+  const adultAge = 18 + Math.round(((seed * 97) % 1) * 24);
+
   return {
     id: makeId("npc"),
     factionId: faction.id,
@@ -459,6 +462,19 @@ function makeNpc(
     name: `${first} ${last}`,
     species: choose(catalog.species, "Human", (seed * 7.03 + 0.12) % 1),
     traits,
+    nationality: faction.name,
+    tags: [
+      faction.name,
+      civilizationAdjective(faction.name),
+      ordinal < 2 ? "Founder" : "Citizen"
+    ],
+    sex,
+    birthTick: -adultAge * 12,
+    generation: 0,
+    parentIds: [],
+    partnerId: null,
+    childIds: [],
+    populationWeight: 1,
     stats,
     hp: maxHp,
     maxHp,
@@ -470,6 +486,53 @@ function makeNpc(
     state: "idle",
     kills: 0
   };
+}
+
+function npcAgeYears(npc: NpcUnit, tick: number) {
+  return Math.max(0, Math.floor((tick - (npc.birthTick ?? -18 * 12)) / 12));
+}
+
+function makeChildNpc(
+  mother: NpcUnit,
+  father: NpcUnit,
+  faction: Faction,
+  catalog: NameCatalog,
+  tick: number
+): NpcUnit {
+  const ordinal = Math.abs(
+    Math.round(
+      deterministicRoll(`${mother.id}:${father.id}`, tick) * 100_000
+    )
+  );
+  const child = makeNpc(faction, catalog, ordinal);
+  const motherLast = mother.name.split(" ").slice(-1)[0] || faction.name;
+  const first = choose(
+    catalog.npcFirstNames,
+    "Child",
+    deterministicRoll(mother.id + father.id, tick)
+  );
+  child.name = `${first} ${motherLast}`;
+  child.birthTick = tick;
+  child.generation = Math.max(mother.generation ?? 0, father.generation ?? 0) + 1;
+  child.parentIds = [mother.id, father.id];
+  child.partnerId = null;
+  child.childIds = [];
+  child.tags = [
+    faction.name,
+    civilizationAdjective(faction.name),
+    "Born Citizen",
+    `Generation ${child.generation}`
+  ];
+  child.nationality = faction.name;
+  child.sex = ordinal % 2 === 0 ? "female" : "male";
+  child.populationWeight = 1;
+  child.lat = mother.lat;
+  child.lon = mother.lon;
+  child.attack *= 0.35;
+  child.defense *= 0.35;
+  child.state = "idle";
+
+  return child;
 }
 
 function ensureSquad(
