@@ -53,32 +53,36 @@ export default function App() {
         </div>
       </header>
 
-      <Toolbar />
+      {workspaceOpen && (
+        <>
+          <Toolbar />
 
-      <div className="workspace">
-        <aside className="left-sidebar">
-          <CloudPanel />
-          <OnlinePanel />
-          <CountryPanel />
-        </aside>
+          <div className="workspace">
+            <aside className="left-sidebar">
+              <CloudPanel />
+              <OnlinePanel />
+              <CountryPanel />
+            </aside>
 
-        <section className="viewport">
-          <WorldCanvas />
-          <div className="viewport-hint">
-            Orbit: drag · Zoom: wheel · Click colored land: country · Draw Territory:
-            click 3+ points, then Finish
+            <section className="viewport">
+              <WorldCanvas />
+              <div className="viewport-hint">
+                Orbit: drag · Zoom: wheel · Click colored land: country · Draw Territory:
+                click 3+ points, then Finish
+              </div>
+
+              {playMode && (
+                <div className="play-badge">
+                  <span className="play-dot" />
+                  LIVE WORLD SIMULATION
+                </div>
+              )}
+            </section>
+
+            <Inspector />
           </div>
-
-          {playMode && (
-            <div className="play-badge">
-              <span className="play-dot" />
-              LIVE WORLD SIMULATION
-            </div>
-          )}
-        </section>
-
-        <Inspector />
-      </div>
+        </>
+      )}
 
       {!workspaceOpen && <WorldPicker onOpen={() => setWorkspaceOpen(true)} />}
     </main>
