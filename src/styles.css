@@ -1295,3 +1295,329 @@ button {
     z-index: 40;
   }
 }
+
+
+/* Strategy UI refresh: 2D battle map, nation support, Firestore save slots */
+
+.viewport-2d {
+  overflow: hidden;
+  background: #071019;
+}
+
+.map2d-shell {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  background: #071019;
+}
+
+.map2d {
+  width: 100%;
+  height: 100%;
+  display: block;
+  touch-action: manipulation;
+  background: #123d5a;
+}
+
+.map2d.drawing {
+  cursor: crosshair;
+}
+
+.map2d path {
+  cursor: pointer;
+  transition: fill-opacity 120ms ease, filter 120ms ease;
+}
+
+.map2d path:hover {
+  fill-opacity: 1;
+  filter: brightness(1.12);
+}
+
+.war-line {
+  stroke: #ff4f58;
+  stroke-width: 1.8;
+  stroke-dasharray: 7 5;
+  opacity: 0.82;
+  animation: warMarch 900ms linear infinite;
+  pointer-events: none;
+}
+
+@keyframes warMarch {
+  to {
+    stroke-dashoffset: -24;
+  }
+}
+
+.battle-pulse {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: battlePulse 700ms ease-out infinite;
+  pointer-events: none;
+}
+
+@keyframes battlePulse {
+  0% {
+    opacity: 1;
+    transform: scale(.7);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.65);
+  }
+}
+
+.map2d-hud {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  display: grid;
+  gap: 2px;
+  max-width: min(460px, calc(100% - 24px));
+  padding: 8px 10px;
+  border: 1px solid rgba(139, 170, 202, .25);
+  border-radius: 8px;
+  background: rgba(7, 14, 23, .84);
+  backdrop-filter: blur(8px);
+  pointer-events: none;
+}
+
+.map2d-hud strong {
+  font-size: 11px;
+}
+
+.map2d-hud span {
+  color: #8c9caf;
+  font-size: 9px;
+}
+
+.view-toggle .button {
+  min-width: 96px;
+}
+
+.support-star {
+  color: #ffd166;
+  text-shadow: 0 0 10px rgba(255, 209, 102, .6);
+}
+
+.support-button {
+  margin-top: 9px;
+  border-color: #806c2c;
+}
+
+.support-button.active {
+  background: #443818;
+  border-color: #ffd166;
+  color: #ffe3a0;
+}
+
+.nation-adjust-grid,
+.effect-button-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 5px;
+}
+
+.effect-positive {
+  border-color: #28644d;
+  background: #14372b;
+  color: #8de0b8;
+}
+
+.effect-negative {
+  border-color: #70343d;
+  background: #3b1d23;
+  color: #ff9aa8;
+}
+
+.active-effects {
+  display: grid;
+  gap: 4px;
+  margin-top: 8px;
+}
+
+.active-effects > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 7px;
+  padding: 6px 7px;
+  border-radius: 6px;
+  font-size: 9px;
+}
+
+.active-effects > div.positive {
+  border: 1px solid #285a47;
+  background: #10271f;
+}
+
+.active-effects > div.negative {
+  border: 1px solid #65333b;
+  background: #2a171b;
+}
+
+.active-effects span {
+  color: #77899d;
+}
+
+.world-stats-strip {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4px;
+  margin-top: 8px;
+}
+
+.world-stats-strip > div {
+  min-width: 0;
+  padding: 6px 4px;
+  border: 1px solid #273442;
+  border-radius: 6px;
+  background: #101720;
+  text-align: center;
+}
+
+.world-stats-strip span,
+.world-stats-strip strong {
+  display: block;
+}
+
+.world-stats-strip span {
+  color: #718397;
+  font-size: 7px;
+  text-transform: uppercase;
+}
+
+.world-stats-strip strong {
+  margin-top: 2px;
+  font-size: 11px;
+}
+
+.account-pill {
+  border: 1px solid #315f4c;
+  border-radius: 999px;
+  padding: 3px 7px;
+  background: #132c23;
+  color: #7ed8ad;
+  font-size: 8px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.account-pill.guest {
+  border-color: #4b5664;
+  background: #202832;
+  color: #96a3b2;
+}
+
+.save-account-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 7px;
+  align-items: center;
+  padding: 8px;
+  border: 1px solid #293542;
+  border-radius: 7px;
+  background: #101720;
+}
+
+.save-account-row strong,
+.save-account-row small {
+  display: block;
+}
+
+.save-account-row strong {
+  font-size: 10px;
+}
+
+.save-account-row small {
+  margin-top: 2px;
+  color: #718296;
+  font-size: 8px;
+  line-height: 1.3;
+}
+
+.save-create-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 6px;
+  margin-top: 7px;
+}
+
+.save-slot-list {
+  display: grid;
+  gap: 4px;
+  max-height: 210px;
+  margin-top: 7px;
+  overflow-y: auto;
+}
+
+.save-slot {
+  display: grid;
+  grid-template-columns: 1fr 28px;
+  overflow: hidden;
+  border: 1px solid #2b3745;
+  border-radius: 7px;
+  background: #101821;
+}
+
+.save-slot-main,
+.save-delete {
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.save-slot-main {
+  display: block;
+  min-width: 0;
+  padding: 7px 8px;
+  text-align: left;
+}
+
+.save-slot-main strong,
+.save-slot-main span {
+  display: block;
+}
+
+.save-slot-main strong {
+  overflow: hidden;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.save-slot-main span {
+  margin-top: 2px;
+  color: #738397;
+  font-size: 8px;
+}
+
+.save-delete {
+  color: #a87880;
+  font-size: 17px;
+}
+
+.save-slot:hover {
+  border-color: #496782;
+  background: #142131;
+}
+
+@media (max-width: 760px) {
+  .nation-adjust-grid,
+  .effect-button-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .world-stats-strip {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .view-toggle .button {
+    min-width: 82px;
+  }
+
+  .map2d-hud {
+    bottom: 8px;
+  }
+}
