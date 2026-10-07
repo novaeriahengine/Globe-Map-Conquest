@@ -1929,34 +1929,139 @@ export const useGameStore = create<GameStore>((set, get) => {
           const attackerMods = nationModifiers(attacker);
           const defenderMods = nationModifiers(defender);
 
+          const frontDistance = geographicDistance(attacker, defender);
+          const attackerMilitary = attacker.military ?? {
+            army: attacker.army,
+            navy: 0,
+            airForce: 0,
+            reserves: 0,
+            doctrine: "balanced" as const
+          };
+          const defenderMilitary = defender.military ?? {
+            army: defender.army,
+            navy: 0,
+            airForce: 0,
+            reserves: 0,
+            doctrine: "balanced" as const
+          };
+
+          const expedition =
+            frontDistance > 20
+              ? Math.max(
+                  0.42,
+                  Math.min(
+                    1.18,
+                    0.55 +
+                      (attackerMilitary.navy /
+                        Math.max(1, attacker.army)) *
+                        3.5 *
+                        eraConfig.navalPower
+                  )
+                )
+              : 1;
+
+          const defenderNaval =
+            frontDistance > 20
+              ? Math.max(
+                  0.5,
+                  Math.min(
+                    1.15,
+                    0.62 +
+                      (defenderMilitary.navy /
+                        Math.max(1, defender.army)) *
+                        3 *
+                        eraConfig.navalPower
+                  )
+                )
+              : 1;
+
+          const attackerAir =
+            1 +
+            Math.min(
+              0.32,
+              (attackerMilitary.airForce / Math.max(1, attacker.army)) *
+                1.8 *
+                eraConfig.airPower
+            );
+          const defenderAir =
+            1 +
+            Math.min(
+              0.28,
+              (defenderMilitary.airForce / Math.max(1, defender.army)) *
+                1.6 *
+                eraConfig.airPower
+            );
+
+          const attackerDoctrine =
+            attackerMilitary.doctrine === "aggressive"
+              ? 1.12
+              : attackerMilitary.doctrine === "maneuver"
+                ? 1.08
+                : 1;
+          const defenderDoctrine =
+            defenderMilitary.doctrine === "defensive" ? 1.14 : 1;
+
           const attackRoll =
             attacker.army *
             attackerMods.attack *
-            (0.035 + Math.random() * 0.035) *
-            (0.75 + attackerDiscipline / 150);
+            eraConfig.battleRate *
+            (0.75 + Math.random() * 0.5) *
+            (0.75 + attackerDiscipline / 150) *
+            expedition *
+            attackerAir *
+            attackerDoctrine;
           const defenseRoll =
             defender.army *
             defenderMods.defense *
-            (0.035 + Math.random() * 0.035) *
-            (0.75 + defenderDiscipline / 150);
+            eraConfig.battleRate *
+            (0.75 + Math.random() * 0.5) *
+            (0.75 + defenderDiscipline / 150) *
+            defenderNaval *
+            defenderAir *
+            defenderDoctrine;
 
-          attacker.army = Math.max(0, attacker.army - defenseRoll * 0.42);
-          defender.army = Math.max(0, defender.army - attackRoll * 0.5);
-          attacker.treasury = Math.max(0, attacker.treasury - 3);
-          defender.treasury = Math.max(0, defender.treasury - 3);
+          const attackerLoss = defenseRoll * 0.55;
+          const defenderLoss = attackRoll * 0.62;
+          attacker.army = Math.max(0, attacker.army - attackerLoss);
+          defender.army = Math.max(0, defender.army - defenderLoss);
+          attacker.population = Math.max(
+            2,
+            (attacker.population ?? 2) - Math.round(attackerLoss * 0.08)
+          );
+          defender.population = Math.max(
+            2,
+            (defender.population ?? 2) - Math.round(defenderLoss * 0.1)
+          );
+          attacker.treasury = Math.max(
+            0,
+            attacker.treasury - Math.max(4, attackerLoss / 200)
+          );
+          defender.treasury = Math.max(
+            0,
+            defender.treasury - Math.max(4, defenderLoss / 200)
+          );
 
-          const attackerAlive = attackerUnits.length;
-          const defenderAlive = defenderUnits.length;
+          if (attacker.military) attacker.military.army = attacker.army;
+          if (defender.military) defender.military.army = defender.army;
+
+          const defenderCollapse = Math.max(
+            600,
+            (defender.population ?? 100_000) * 0.000035
+          );
+          const attackerCollapse = Math.max(
+            600,
+            (attacker.population ?? 100_000) * 0.000035
+          );
 
           if (
-            (defender.army <= 1 || defenderAlive === 0) &&
-            attacker.army > defender.army &&
-            attackerAlive > 0
+            defender.army <= defenderCollapse &&
+            attacker.army > defender.army * 1.25
           ) {
             defender.controlledBy = attacker.controlledBy ?? attacker.id;
             defender.occupationStartedTick = state.tick + 1;
             defender.stability = 30;
-            defender.army = 12;
+            defender.army = Math.max(800, defenderCollapse * 0.55);
+            if (defender.military) defender.military.army = defender.army;
             defender.relations[attacker.id] = "neutral";
             attacker.relations[defender.id] = "neutral";
             civilizations = civilizations.map((civilization) =>
@@ -1975,14 +2080,14 @@ export const useGameStore = create<GameStore>((set, get) => {
               `${attacker.name} conquered ${defender.name}. The ${civilizations.find((item) => item.id === defender.civilizationId)?.adjective ?? defender.name} civilization survived the fall.`
             );
           } else if (
-            (attacker.army <= 1 || attackerAlive === 0) &&
-            defender.army > attacker.army &&
-            defenderAlive > 0
+            attacker.army <= attackerCollapse &&
+            defender.army > attacker.army * 1.25
           ) {
             attacker.controlledBy = defender.controlledBy ?? defender.id;
             attacker.occupationStartedTick = state.tick + 1;
             attacker.stability = 30;
-            attacker.army = 12;
+            attacker.army = Math.max(800, attackerCollapse * 0.55);
+            if (attacker.military) attacker.military.army = attacker.army;
             attacker.relations[defender.id] = "neutral";
             defender.relations[attacker.id] = "neutral";
             civilizations = civilizations.map((civilization) =>
@@ -2042,7 +2147,14 @@ export const useGameStore = create<GameStore>((set, get) => {
           occupied.controlledBy = null;
           occupied.occupationStartedTick = null;
           occupied.revivalCount = (occupied.revivalCount ?? 0) + 1;
-          occupied.army = Math.max(34, loyalPeople.length * 7);
+          occupied.army = Math.max(5_000, loyalPeople.length * 2_500);
+          if (occupied.military) {
+            occupied.military.army = occupied.army;
+            occupied.military.reserves = Math.max(
+              occupied.military.reserves,
+              occupied.army * 1.5
+            );
+          }
           occupied.stability = 58;
           occupied.relations[controllerId] = "war";
           if (controller) controller.relations[occupied.id] = "war";
