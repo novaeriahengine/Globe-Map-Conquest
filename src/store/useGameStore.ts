@@ -1395,8 +1395,22 @@ export const useGameStore = create<GameStore>((set, get) => {
         effects: [],
         civilizationId,
         occupationStartedTick: null,
-        revivalCount: 0
+        revivalCount: 0,
+        focus: "balanced",
+        integrationPolicy: "balanced",
+        population: 180_000,
+        cityCount: 1,
+        townCount: 8,
+        integrationProgress: 50,
+        military: {
+          army: 42_000,
+          navy: 3_500,
+          airForce: state.era === "modern" || state.era === "future" ? 2_400 : 0,
+          reserves: 75_000,
+          doctrine: "balanced"
+        }
       };
+      faction.army = faction.military!.army;
 
       const civilization: CivilizationRecord = {
         id: civilizationId,
@@ -2233,6 +2247,14 @@ export const useGameStore = create<GameStore>((set, get) => {
             ? `New ${civilization.name}`
             : civilization.name;
 
+        const successorArmy = Math.max(6_000, survivors.length * 2_000);
+        const successorPopulation = Math.max(
+          35_000,
+          survivors.reduce(
+            (sum, person) => sum + (person.populationWeight ?? 1),
+            0
+          ) * 250
+        );
         const successor: Faction = {
           id: factionId,
           name: successorName,
@@ -2244,8 +2266,8 @@ export const useGameStore = create<GameStore>((set, get) => {
           lon,
           color: civilization.color,
           accentColor: seededColor(factionId + "-accent"),
-          army: Math.max(28, survivors.length * 6),
-          treasury: 320,
+          army: successorArmy,
+          treasury: 18_000,
           stability: 64,
           controlledBy: null,
           rulerName: null,
@@ -2255,7 +2277,22 @@ export const useGameStore = create<GameStore>((set, get) => {
           effects: [],
           civilizationId: civilization.id,
           occupationStartedTick: null,
-          revivalCount: civilization.revivalCount + 1
+          revivalCount: civilization.revivalCount + 1,
+          focus: "integration",
+          integrationPolicy: "settler",
+          population: successorPopulation,
+          cityCount: 1,
+          townCount: 4,
+          integrationProgress: 35,
+          military: {
+            army: successorArmy,
+            navy: Math.round(successorArmy * 0.05),
+            airForce: state.era === "modern" || state.era === "future"
+              ? Math.round(successorArmy * 0.025)
+              : 0,
+            reserves: successorArmy * 2,
+            doctrine: "defensive"
+          }
         };
 
         successorFactions.push(successor);
