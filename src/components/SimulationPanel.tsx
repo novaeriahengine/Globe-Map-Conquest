@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { ConflictScenario, Era } from "../game/types";
 import { useGameStore } from "../store/useGameStore";
 
@@ -46,9 +46,16 @@ export function SimulationPanel({ god = false }: { god?: boolean }) {
   const populationSeed = useGameStore((state) => state.populationSeed);
   const seedPopulation = useGameStore((state) => state.seedPopulation);
   const npcs = useGameStore((state) => state.npcs);
+  const territories = useGameStore((state) => state.territories);
+  const selectedTerritoryId = useGameStore((state) => state.selectedTerritoryId);
   const tick = useGameStore((state) => state.tick);
 
   const [population, setPopulation] = useState(populationSeed);
+  const [spawnTerritoryId, setSpawnTerritoryId] = useState("");
+
+  useEffect(() => {
+    if (selectedTerritoryId) setSpawnTerritoryId(selectedTerritoryId);
+  }, [selectedTerritoryId]);
   const selected =
     factions.find((faction) => faction.id === selectedFactionId) ?? factions[0];
 
@@ -65,6 +72,13 @@ export function SimulationPanel({ god = false }: { god?: boolean }) {
   }, [npcs, selected]);
 
   const scenario = scenarios.find((item) => item.id === conflictScenario)!;
+  const spawnTerritories = selected
+    ? territories.filter(
+        (territory) =>
+          territory.ownerFactionId === selected.id ||
+          territory.parentFactionId === selected.id
+      )
+    : [];
 
   return (
     <section className="panel simulation-panel">
@@ -160,9 +174,28 @@ export function SimulationPanel({ god = false }: { god?: boolean }) {
               ))}
             </div>
 
+            <select
+              className="select-input"
+              value={spawnTerritoryId}
+              onChange={(event) => setSpawnTerritoryId(event.target.value)}
+            >
+              <option value="">Spawn at capital / nation center</option>
+              {spawnTerritories.map((territory) => (
+                <option key={territory.id} value={territory.id}>
+                  {territory.name}
+                </option>
+              ))}
+            </select>
+
             <button
               className="button full"
-              onClick={() => seedPopulation(selected.id, population)}
+              onClick={() =>
+                seedPopulation(
+                  selected.id,
+                  population,
+                  spawnTerritoryId || null
+                )
+              }
             >
               Seed / Reset Founding Population
             </button>
