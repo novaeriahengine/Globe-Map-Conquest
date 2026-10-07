@@ -2,7 +2,10 @@ import { useEffect, useState } from "react";
 import { CountryPanel } from "./components/CountryPanel";
 import { Inspector } from "./components/Inspector";
 import { OnlinePanel } from "./components/OnlinePanel";
+import { PlayerPanel } from "./components/PlayerPanel";
+import { QuestPanel } from "./components/QuestPanel";
 import { SaveLoadPanel } from "./components/SaveLoadPanel";
+import { SimulationPanel } from "./components/SimulationPanel";
 import { Toolbar } from "./components/Toolbar";
 import { Map2D, WorldCanvas } from "./components/WorldCanvas";
 import { WorldPicker } from "./components/WorldPicker";
@@ -15,7 +18,9 @@ export default function App() {
   const worldMode = useGameStore((state) => state.worldMode);
   const viewMode = useGameStore((state) => state.viewMode);
   const setViewMode = useGameStore((state) => state.setViewMode);
+  const workspaceMode = useGameStore((state) => state.workspaceMode);
   const worldName = useGameStore((state) => state.worldName);
+  const era = useGameStore((state) => state.era);
 
   useEffect(() => {
     if (!playMode || !workspaceOpen) return;
@@ -27,6 +32,27 @@ export default function App() {
     return () => window.clearInterval(timer);
   }, [playMode, simulateTick, workspaceOpen]);
 
+  const leftPanel =
+    workspaceMode === "editor" ? (
+      <>
+        <SaveLoadPanel />
+        <OnlinePanel />
+        <CountryPanel />
+      </>
+    ) : workspaceMode === "player" ? (
+      <PlayerPanel />
+    ) : workspaceMode === "god" ? (
+      <>
+        <SimulationPanel god />
+        <CountryPanel />
+      </>
+    ) : (
+      <>
+        <SimulationPanel />
+        <CountryPanel />
+      </>
+    );
+
   return (
     <main className="app-shell">
       <header className="topbar">
@@ -35,19 +61,15 @@ export default function App() {
           <div>
             <strong>Globe Map Conquest</strong>
             <span>
-              {worldName} · {viewMode === "map2d" ? "2D Battle Map" : "3D Globe"} ·{" "}
-              {worldMode === "earth"
-                ? "Earth"
-                : worldMode === "sandbox"
-                  ? "Sandbox"
-                  : "Procedural Planet"}
+              {worldName} · {viewMode === "map2d" ? "2D World" : "3D Globe"} ·{" "}
+              {era} · {workspaceMode}
             </span>
           </div>
         </div>
 
         <div className="topbar-actions">
           <div className="topbar-note">
-            Living nations · diplomacy · war · Firestore saves
+            Living nations · families · eras · strategy · Firestore
           </div>
           <button className="button compact" onClick={() => setWorkspaceOpen(false)}>
             Saves / Worlds
@@ -59,11 +81,15 @@ export default function App() {
         <>
           <Toolbar />
 
-          <div className="workspace">
-            <aside className="left-sidebar">
-              <SaveLoadPanel />
-              <OnlinePanel />
-              <CountryPanel />
+          <div
+            className={
+              workspaceMode === "player"
+                ? "workspace workspace-player"
+                : "workspace"
+            }
+          >
+            <aside className="left-sidebar mode-sidebar">
+              {leftPanel}
             </aside>
 
             <section className={viewMode === "map2d" ? "viewport viewport-2d" : "viewport"}>
@@ -86,19 +112,25 @@ export default function App() {
 
               <div className="viewport-hint">
                 {viewMode === "map2d"
-                  ? "2D mode: click nations · watch NPC armies move and fight · select a nation to support it"
-                  : "3D mode: rotate globe · zoom · click a country · switch to 2D for the battle view"}
+                  ? "Tap nations · drag the map · use the zoom slider · armies collapse into flag groups at long range"
+                  : "Rotate globe · zoom · tap a country · switch back to 2D for strategy and battle detail"}
               </div>
 
               {playMode && (
                 <div className="play-badge">
                   <span className="play-dot" />
-                  LIVE WORLD SIMULATION
+                  LIVE WORLD · {workspaceMode.toUpperCase()} MODE
                 </div>
               )}
             </section>
 
-            <Inspector />
+            {workspaceMode === "editor" ? (
+              <Inspector />
+            ) : workspaceMode !== "player" ? (
+              <aside className="right-sidebar">
+                <QuestPanel />
+              </aside>
+            ) : null}
           </div>
         </>
       )}
