@@ -1648,7 +1648,7 @@ export const useGameStore = create<GameStore>((set, get) => {
       const diplomacyEvents: string[] = [];
       const birthEvents: string[] = [];
 
-      const nextFactions = state.factions.map((rawFaction) => {
+      const nextFactions: Faction[] = state.factions.map((rawFaction) => {
         const faction = normalizeFactionCivilization(rawFaction);
         const modifiers = nationModifiers(faction);
         const effects = (faction.effects ?? [])
@@ -1904,7 +1904,7 @@ export const useGameStore = create<GameStore>((set, get) => {
         npcs = ensureSquad(npcs, faction, state.catalog, 8);
       }
 
-      const mutableNpcs = npcs.map((npc) => ({
+      const mutableNpcs: NpcUnit[] = npcs.map((npc) => ({
         ...npc,
         tags: [...(npc.tags ?? [])],
         parentIds: [...(npc.parentIds ?? [])],
@@ -1917,7 +1917,7 @@ export const useGameStore = create<GameStore>((set, get) => {
       // store millions of individual people in one world document.
       if (
         nextTick % eraConfig.birthEvery === 0 &&
-        mutableNpcs.length < 1_500
+        mutableNpcs.length < 600
       ) {
         const familyFactions = nextFactions
           .filter(
