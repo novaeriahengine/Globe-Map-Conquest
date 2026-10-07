@@ -2,19 +2,22 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Prototype rules: this project currently has no user-login requirement.
-    // Before a public production launch, replace these with authenticated roles
-    // and App Check enforcement so strangers cannot overwrite worlds.
+    // Worlds are readable by the browser so the world picker can list public worlds.
+    // Writes require Firebase Anonymous Auth. There is no visible login screen.
     match /worlds/{worldId} {
-      allow read, write: if true;
+      allow read: if true;
+      allow create, update, delete: if request.auth != null;
 
       match /{document=**} {
-        allow read, write: if true;
+        allow read: if true;
+        allow create, update, delete: if request.auth != null;
       }
     }
 
     match /catalogs/{catalogId} {
-      allow read, write: if true;
+      allow read: if true;
+      allow create, update: if request.auth != null;
+      allow delete: if false;
     }
   }
 }
