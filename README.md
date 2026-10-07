@@ -132,3 +132,5 @@ Major next systems:
 10. World publishing, permissions, moderation and creator collaboration
 
 The project uses familiar editor concepts such as hierarchy, inspectors, transform gizmos and play mode while remaining an original implementation with its own code, assets and game systems.
+
+<!-- 2d-map-upgrade -->
