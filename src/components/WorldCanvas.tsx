@@ -290,7 +290,6 @@ function SceneObjects() {
 function WorldScene() {
   const worldMode = useGameStore((state) => state.worldMode);
   const seed = useGameStore((state) => state.seed);
-  const selectObject = useGameStore((state) => state.selectObject);
 
   return (
     <>
@@ -305,7 +304,7 @@ function WorldScene() {
       <pointLight position={[-5, -1, -4]} intensity={0.7} color="#5c8dff" />
       <Stars radius={70} depth={30} count={1800} factor={2.5} saturation={0} fade speed={0.4} />
 
-      <group onPointerMissed={() => selectObject(null)}>
+      <group>
         {worldMode === "earth" ? <EarthGlobe /> : <ProceduralGlobe seed={seed} />}
         {worldMode === "earth" && <CountryMarkers />}
         <SceneObjects />
@@ -323,8 +322,11 @@ function WorldScene() {
 }
 
 export function WorldCanvas() {
+  const selectObject = useGameStore((state) => state.selectObject);
+
   return (
     <Canvas
+      onPointerMissed={() => selectObject(null)}
       shadows
       dpr={[1, 1.6]}
       camera={{ position: [0, 1.6, 5.7], fov: 46, near: 0.05, far: 120 }}
