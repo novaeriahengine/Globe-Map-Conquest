@@ -1,5 +1,7 @@
 import type { SceneObject, Vec3 } from "../game/types";
 import { useGameStore } from "../store/useGameStore";
+import { QuestPanel } from "./QuestPanel";
+import { TerritoryPanel } from "./TerritoryPanel";
 
 function VectorEditor({
   label,
@@ -147,6 +149,9 @@ export function Inspector() {
           Simulation tick <strong>{tick}</strong>
         </div>
       </section>
+
+      <TerritoryPanel />
+      <QuestPanel />
 
       <section className="panel scene-panel">
         <div className="panel-title">Hierarchy</div>
