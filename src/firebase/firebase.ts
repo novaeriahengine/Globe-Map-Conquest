@@ -1,5 +1,12 @@
 import { getApps, initializeApp } from "firebase/app";
-import { getAuth, signInAnonymously } from "firebase/auth";
+import {
+  getAuth,
+  GoogleAuthProvider,
+  linkWithPopup,
+  signInAnonymously,
+  signInWithPopup,
+  signOut
+} from "firebase/auth";
 import {
   initializeFirestore,
   persistentLocalCache,
@@ -25,11 +32,40 @@ export const firestore = initializeFirestore(firebaseApp, {
   })
 });
 
-
 export const firebaseAuth = getAuth(firebaseApp);
 
 export async function ensureFirebaseSession() {
   if (firebaseAuth.currentUser) return firebaseAuth.currentUser;
   const credential = await signInAnonymously(firebaseAuth);
   return credential.user;
+}
+
+export async function signInWithGoogleAccount() {
+  const provider = new GoogleAuthProvider();
+  provider.setCustomParameters({ prompt: "select_account" });
+
+  const current = firebaseAuth.currentUser;
+  if (current?.isAnonymous) {
+    try {
+      const linked = await linkWithPopup(current, provider);
+      return linked.user;
+    } catch (error: any) {
+      const code = String(error?.code ?? "");
+      if (
+        !code.includes("credential-already-in-use") &&
+        !code.includes("email-already-in-use") &&
+        !code.includes("provider-already-linked")
+      ) {
+        throw error;
+      }
+    }
+  }
+
+  const credential = await signInWithPopup(firebaseAuth, provider);
+  return credential.user;
+}
+
+export async function signOutToGuest() {
+  await signOut(firebaseAuth);
+  return ensureFirebaseSession();
 }
