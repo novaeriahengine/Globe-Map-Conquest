@@ -24,6 +24,11 @@ export function Toolbar() {
   const saveLocal = useGameStore((state) => state.saveLocal);
   const loadLocal = useGameStore((state) => state.loadLocal);
   const resetWorld = useGameStore((state) => state.resetWorld);
+  const beginTerritoryDraw = useGameStore((state) => state.beginTerritoryDraw);
+  const undoTerritoryPoint = useGameStore((state) => state.undoTerritoryPoint);
+  const cancelTerritoryDraw = useGameStore((state) => state.cancelTerritoryDraw);
+  const finishTerritory = useGameStore((state) => state.finishTerritory);
+  const territoryDraft = useGameStore((state) => state.territoryDraft);
 
   return (
     <div className="toolbar">
@@ -48,7 +53,40 @@ export function Toolbar() {
             {item.label}
           </button>
         ))}
+
+        <button
+          className={tool === "territory" ? "button active territory-tool" : "button territory-tool"}
+          onClick={beginTerritoryDraw}
+        >
+          ✎ Draw Territory
+        </button>
       </div>
+
+      {tool === "territory" && (
+        <>
+          <div className="toolbar-divider" />
+          <div className="toolbar-group territory-actions">
+            <span className="draft-count">{territoryDraft.length} points</span>
+            <button
+              className="button compact"
+              disabled={territoryDraft.length === 0}
+              onClick={undoTerritoryPoint}
+            >
+              Undo Point
+            </button>
+            <button
+              className="button compact success"
+              disabled={territoryDraft.length < 3}
+              onClick={() => finishTerritory()}
+            >
+              Finish Territory
+            </button>
+            <button className="button compact danger" onClick={cancelTerritoryDraw}>
+              Cancel
+            </button>
+          </div>
+        </>
+      )}
 
       <div className="toolbar-divider" />
 
@@ -67,14 +105,16 @@ export function Toolbar() {
       <div className="toolbar-spacer" />
 
       <div className="toolbar-group">
-        <button className="button" onClick={saveLocal}>Save</button>
+        <button className="button" onClick={saveLocal}>
+          Save Local
+        </button>
         <button
           className="button"
           onClick={() => {
             if (!loadLocal()) window.alert("No saved world found in this browser.");
           }}
         >
-          Load
+          Load Local
         </button>
         <button
           className="button subtle"
