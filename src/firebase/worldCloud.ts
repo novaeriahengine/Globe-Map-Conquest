@@ -13,7 +13,7 @@ import {
 } from "firebase/firestore";
 import { DEFAULT_CATALOG } from "../data/catalogDefaults";
 import type { NameCatalog, SavedWorld } from "../game/types";
-import { firestore } from "./firebase";
+import { ensureFirebaseSession, firestore } from "./firebase";
 
 export interface CloudWorldSummary {
   id: string;
@@ -38,6 +38,7 @@ export async function saveWorldToCloud(
   worldId: string,
   snapshot: SavedWorld
 ): Promise<string> {
+  await ensureFirebaseSession();
   const id = cleanWorldId(worldId);
   const worldRef = doc(firestore, "worlds", id);
   const stateRef = doc(firestore, "worlds", id, "state", "current");
@@ -136,6 +137,7 @@ export async function ensureDefaultCatalog(): Promise<NameCatalog> {
     };
   }
 
+  await ensureFirebaseSession();
   await setDoc(catalogRef, {
     ...DEFAULT_CATALOG,
     updatedAt: serverTimestamp()
