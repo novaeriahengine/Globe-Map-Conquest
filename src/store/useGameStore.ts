@@ -586,6 +586,138 @@ function focusLabel(focus: NationFocus) {
   return labels[focus];
 }
 
+
+function proceduralLandValue(lat: number, lon: number, seed: number) {
+  return (
+    Math.sin((lon + seed * 0.01) * 0.075) +
+    Math.cos((lat - seed * 0.008) * 0.11) +
+    Math.sin((lon + lat) * 0.19 + seed * 0.003) * 0.55
+  );
+}
+
+function createProceduralFactions(
+  seed: number,
+  catalog: NameCatalog,
+  count: number
+): Faction[] {
+  const positions: LatLon[] = [];
+  let attempt = 0;
+
+  while (positions.length < count && attempt < count * 80) {
+    const t = ((attempt + 1) * 0.61803398875 + (seed % 997) / 997) % 1;
+    const u = ((attempt + 1) * 0.41421356237 + (seed % 577) / 577) % 1;
+    const lat = -62 + t * 124;
+    const lon = -178 + u * 356;
+    const terrain = proceduralLandValue(lat, lon, seed);
+    const separated = positions.every(
+      (point) => angleDistance(point, [lat, lon]) > 15
+    );
+
+    if (terrain > -0.08 && terrain < 1.25 && separated) {
+      positions.push([lat, lon]);
+    }
+    attempt += 1;
+  }
+
+  while (positions.length < count) {
+    const index = positions.length;
+    positions.push([
+      -45 + ((index * 37 + seed) % 90),
+      -170 + ((index * 71 + seed) % 340)
+    ]);
+  }
+
+  return positions.map(([lat, lon], index) => {
+    const name = choose(
+      catalog.countryNames,
+      `Kingdom ${index + 1}`,
+      ((index + 1) * 0.193 + (seed % 101) / 101) % 1
+    );
+    const id = `PROC-${index + 1}-${Math.abs(seed % 9999)}`;
+    const population = 100;
+    const army = 12;
+
+    return {
+      id,
+      name,
+      cca2: "--",
+      cca3: `P${String(index + 1).padStart(2, "0")}`,
+      emoji: "🏳️",
+      capital: `${name} Camp`,
+      lat,
+      lon,
+      color: seededColor(id),
+      accentColor: seededColor(id + "-accent"),
+      army,
+      treasury: 800,
+      stability: 72,
+      controlledBy: null,
+      rulerName: null,
+      flagPresetId: index % 2 === 0 ? "sunrise" : "forest-band",
+      allianceName: null,
+      relations: {},
+      effects: [],
+      civilizationId: `civ-${id}`,
+      occupationStartedTick: null,
+      revivalCount: 0,
+      focus: "balanced",
+      integrationPolicy: "balanced",
+      population,
+      cityCount: 1,
+      townCount: 1,
+      integrationProgress: 45,
+      military: {
+        army,
+        navy: 0,
+        airForce: 0,
+        reserves: 20,
+        doctrine: "balanced"
+      }
+    } as Faction;
+  });
+}
+
+function createProceduralTerritories(
+  factions: Faction[],
+  seed: number
+): TerritoryPatch[] {
+  return factions.map((faction, factionIndex) => {
+    const points: LatLon[] = [];
+    const vertices = 10;
+
+    for (let index = 0; index < vertices; index += 1) {
+      const angle = (index / vertices) * Math.PI * 2;
+      const baseRadius = 7 + ((factionIndex * 17 + index * 7 + seed) % 5);
+      const testLat = faction.lat + Math.sin(angle) * baseRadius;
+      const lonScale = Math.max(0.35, Math.cos((faction.lat * Math.PI) / 180));
+      const testLon = faction.lon + (Math.cos(angle) * baseRadius) / lonScale;
+      const terrain = proceduralLandValue(testLat, testLon, seed);
+      const boundaryPressure =
+        terrain > 1.0 ? 0.48 : terrain < -0.08 ? 0.38 : 1;
+
+      points.push([
+        faction.lat + Math.sin(angle) * baseRadius * boundaryPressure,
+        ((faction.lon +
+          (Math.cos(angle) * baseRadius * boundaryPressure) / lonScale +
+          540) %
+          360) -
+          180
+      ]);
+    }
+
+    return {
+      id: `region-${faction.id}`,
+      name: `${faction.name} Homeland`,
+      parentFactionId: faction.id,
+      ownerFactionId: faction.id,
+      color: faction.color,
+      points,
+      createdAt: Date.now() + factionIndex,
+      genericName: false
+    };
+  });
+}
+
 function traitStats(traits: string[]): TraitStats {
   const stats: TraitStats = {
     aggression: 48,
