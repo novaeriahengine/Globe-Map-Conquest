@@ -2040,10 +2040,29 @@ export const useGameStore = create<GameStore>((set, get) => {
           const military = faction.military;
           const expeditionPenalty =
             distance > 24 && (military?.navy ?? 0) < 2_500 ? 0.42 : 1;
+          const terrainValue =
+            state.worldMode === "earth"
+              ? 0
+              : proceduralLandValue(
+                  (npc.lat + targetFaction.lat) / 2,
+                  (npc.lon + targetFaction.lon) / 2,
+                  state.seed
+                );
+          const terrainPenalty =
+            state.worldMode === "earth"
+              ? 1
+              : terrainValue > 0.95
+                ? 0.46
+                : terrainValue < -0.08
+                  ? (military?.navy ?? 0) > 500
+                    ? 0.72
+                    : 0.22
+                  : 1;
           const step =
             (0.16 + npc.stats.speed * 0.006) *
             eraConfig.movement *
-            expeditionPenalty;
+            expeditionPenalty *
+            terrainPenalty;
           const [lat, lon] = moveToward(current, target, step);
           npc.lat = lat;
           npc.lon = lon;
