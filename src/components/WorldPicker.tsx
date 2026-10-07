@@ -72,6 +72,12 @@ export function WorldPicker({ onOpen }: { onOpen: () => void }) {
 
   const create = (mode: WorldMode, title: string) => {
     createWorld(mode, title);
+    const slug = title
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "");
+    const cloudId = `${slug}-${Date.now().toString(36).slice(-6)}`;
+    localStorage.setItem("gmc-cloud-world-id", cloudId);
     onOpen();
   };
 
