@@ -282,13 +282,129 @@ function civilizationsFromFactions(
 }
 
 function normalizeFactionCivilization(faction: Faction): Faction {
+  const activeArmy =
+    faction.army < 1_000 ? Math.round(faction.army * 1_000) : faction.army;
+  const population =
+    faction.population ??
+    Math.max(100_000, Math.round(activeArmy * 180 + faction.treasury * 90));
+
   return {
     ...faction,
+    army: activeArmy,
     effects: faction.effects ?? [],
     civilizationId: faction.civilizationId || `civ-${faction.id}`,
     occupationStartedTick: faction.occupationStartedTick ?? null,
-    revivalCount: faction.revivalCount ?? 0
+    revivalCount: faction.revivalCount ?? 0,
+    focus: faction.focus ?? "balanced",
+    integrationPolicy: faction.integrationPolicy ?? "balanced",
+    population,
+    cityCount: faction.cityCount ?? Math.max(2, Math.round(population / 2_500_000)),
+    townCount: faction.townCount ?? Math.max(8, Math.round(population / 220_000)),
+    integrationProgress: faction.integrationProgress ?? 55,
+    military:
+      faction.military ?? {
+        army: activeArmy,
+        navy: Math.round(activeArmy * 0.11),
+        airForce: Math.round(activeArmy * 0.08),
+        reserves: Math.round(activeArmy * 1.7),
+        doctrine: "balanced"
+      }
   };
+}
+
+function eraSettings(era: Era) {
+  switch (era) {
+    case "ancient":
+      return {
+        movement: 0.28,
+        battleRate: 0.0018,
+        diplomacyRate: 0.65,
+        navalPower: 0.35,
+        airPower: 0,
+        birthEvery: 30
+      };
+    case "medieval":
+      return {
+        movement: 0.36,
+        battleRate: 0.0024,
+        diplomacyRate: 0.72,
+        navalPower: 0.5,
+        airPower: 0,
+        birthEvery: 28
+      };
+    case "industrial":
+      return {
+        movement: 0.62,
+        battleRate: 0.0035,
+        diplomacyRate: 0.85,
+        navalPower: 0.82,
+        airPower: 0.28,
+        birthEvery: 24
+      };
+    case "future":
+      return {
+        movement: 1.28,
+        battleRate: 0.0062,
+        diplomacyRate: 1.1,
+        navalPower: 1.15,
+        airPower: 1.35,
+        birthEvery: 18
+      };
+    case "modern":
+    default:
+      return {
+        movement: 1,
+        battleRate: 0.0048,
+        diplomacyRate: 1,
+        navalPower: 1,
+        airPower: 1,
+        birthEvery: 20
+      };
+  }
+}
+
+function deterministicRoll(seed: string, tick: number) {
+  let hash = 2166136261 ^ tick;
+  for (let i = 0; i < seed.length; i += 1) {
+    hash ^= seed.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return ((hash >>> 0) % 10_000) / 10_000;
+}
+
+function geographicDistance(a: Faction, b: Faction) {
+  return angleDistance([a.lat, a.lon], [b.lat, b.lon]);
+}
+
+function nearestNations(
+  origin: Faction,
+  factions: Faction[],
+  limit = 8
+) {
+  return factions
+    .filter(
+      (candidate) =>
+        candidate.id !== origin.id &&
+        !candidate.controlledBy
+    )
+    .sort(
+      (a, b) =>
+        geographicDistance(origin, a) - geographicDistance(origin, b)
+    )
+    .slice(0, limit);
+}
+
+function focusLabel(focus: NationFocus) {
+  const labels: Record<NationFocus, string> = {
+    balanced: "Balanced Development",
+    military: "Military Expansion",
+    economy: "Economic Growth",
+    integration: "Territorial Integration",
+    cities: "Cities & Infrastructure",
+    diplomacy: "Diplomacy",
+    naval: "Naval Power"
+  };
+  return labels[focus];
 }
 
 function traitStats(traits: string[]): TraitStats {
