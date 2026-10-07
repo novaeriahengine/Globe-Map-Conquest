@@ -634,15 +634,28 @@ function upgradeSnapshot(snapshot: SavedWorld | LegacySavedWorldV1): SavedWorld 
       ...snapshot,
       viewMode: snapshot.viewMode ?? "map2d",
       supportedFactionId: snapshot.supportedFactionId ?? null,
+      workspaceMode: snapshot.workspaceMode ?? "play",
+      era: snapshot.era ?? "modern",
+      conflictScenario: snapshot.conflictScenario ?? "organic",
+      populationSeed: snapshot.populationSeed ?? 100,
       factions,
       civilizations,
-      npcs: snapshot.npcs.map((npc) => {
+      npcs: snapshot.npcs.map((npc, index) => {
         const faction = factions.find((item) => item.id === npc.factionId);
         return {
           ...npc,
           civilizationId:
             npc.civilizationId ?? faction?.civilizationId ?? `civ-${npc.factionId}`,
-          loyalty: npc.loyalty ?? 70
+          loyalty: npc.loyalty ?? 70,
+          nationality: npc.nationality ?? faction?.name ?? "Unknown",
+          tags: npc.tags ?? [faction?.name ?? "Citizen"],
+          sex: npc.sex ?? (index % 2 === 0 ? "female" : "male"),
+          birthTick: npc.birthTick ?? snapshot.tick - (18 + (index % 24)) * 12,
+          generation: npc.generation ?? 0,
+          parentIds: npc.parentIds ?? [],
+          partnerId: npc.partnerId ?? null,
+          childIds: npc.childIds ?? [],
+          populationWeight: npc.populationWeight ?? 1
         };
       })
     };
@@ -663,6 +676,10 @@ function upgradeSnapshot(snapshot: SavedWorld | LegacySavedWorldV1): SavedWorld 
     worldMode: snapshot.worldMode,
     viewMode: "map2d",
     supportedFactionId: null,
+    workspaceMode: "play",
+    era: "modern",
+    conflictScenario: "organic",
+    populationSeed: 100,
     seed: snapshot.seed,
     objects: snapshot.objects,
     factions,
@@ -682,6 +699,10 @@ export const useGameStore = create<GameStore>((set, get) => {
   worldMode: "earth",
   viewMode: "map2d",
   supportedFactionId: null,
+  workspaceMode: "play",
+  era: "modern",
+  conflictScenario: "organic",
+  populationSeed: 100,
   seed: 48271,
   playMode: false,
   tool: "select",
@@ -717,6 +738,21 @@ export const useGameStore = create<GameStore>((set, get) => {
         ...state.logs
       ].slice(0, 120)
     })),
+
+  setWorkspaceMode: (workspaceMode) =>
+    set((state) => ({
+      workspaceMode,
+      logs: [`Workspace changed to ${workspaceMode} mode.`, ...state.logs].slice(0, 120)
+    })),
+
+  setEra: (era) =>
+    set((state) => ({
+      era,
+      logs: [`World era changed to ${era}.`, ...state.logs].slice(0, 120)
+    })),
+
+  setConflictScenario: (conflictScenario) =>
+    set({ conflictScenario }),
 
   supportFaction: (supportedFactionId) =>
     set((state) => ({
