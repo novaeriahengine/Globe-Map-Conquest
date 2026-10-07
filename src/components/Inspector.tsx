@@ -1,88 +1,6 @@
-import type { SceneObject, Vec3 } from "../game/types";
 import { useGameStore } from "../store/useGameStore";
 import { QuestPanel } from "./QuestPanel";
 import { TerritoryPanel } from "./TerritoryPanel";
-
-function VectorEditor({
-  label,
-  value,
-  onChange,
-  step = 0.05
-}: {
-  label: string;
-  value: Vec3;
-  onChange: (value: Vec3) => void;
-  step?: number;
-}) {
-  return (
-    <div className="vector-editor">
-      <span>{label}</span>
-      <div>
-        {value.map((number, index) => (
-          <input
-            key={index}
-            type="number"
-            step={step}
-            value={Number(number.toFixed(3))}
-            onChange={(event) => {
-              const next = [...value] as Vec3;
-              next[index] = Number(event.target.value);
-              onChange(next);
-            }}
-          />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function SelectedObjectInspector({ object }: { object: SceneObject }) {
-  const updateObjectTransform = useGameStore((state) => state.updateObjectTransform);
-  const updateObjectColor = useGameStore((state) => state.updateObjectColor);
-  const deleteSelectedObject = useGameStore((state) => state.deleteSelectedObject);
-
-  return (
-    <div className="inspector-block">
-      <div className="selected-object-heading">
-        <div>
-          <div className="eyebrow">SELECTED OBJECT</div>
-          <strong>{object.name}</strong>
-        </div>
-        <span className="kind-badge">{object.kind}</span>
-      </div>
-
-      <VectorEditor
-        label="Position"
-        value={object.position}
-        onChange={(position) => updateObjectTransform(object.id, { position })}
-      />
-      <VectorEditor
-        label="Rotation"
-        value={object.rotation}
-        step={0.1}
-        onChange={(rotation) => updateObjectTransform(object.id, { rotation })}
-      />
-      <VectorEditor
-        label="Scale"
-        value={object.scale}
-        onChange={(scale) => updateObjectTransform(object.id, { scale })}
-      />
-
-      <label className="color-row">
-        <span>Color</span>
-        <input
-          type="color"
-          value={object.color.startsWith("#") ? object.color : "#ffffff"}
-          onChange={(event) => updateObjectColor(object.id, event.target.value)}
-        />
-      </label>
-
-      <button className="button danger full" onClick={deleteSelectedObject}>
-        Delete object
-      </button>
-    </div>
-  );
-}
 
 export function Inspector() {
   const worldName = useGameStore((state) => state.worldName);
@@ -92,13 +10,21 @@ export function Inspector() {
   const seed = useGameStore((state) => state.seed);
   const setSeed = useGameStore((state) => state.setSeed);
   const randomizeSeed = useGameStore((state) => state.randomizeSeed);
-  const objects = useGameStore((state) => state.objects);
-  const selectedObjectId = useGameStore((state) => state.selectedObjectId);
-  const selectObject = useGameStore((state) => state.selectObject);
   const logs = useGameStore((state) => state.logs);
   const tick = useGameStore((state) => state.tick);
+  const factions = useGameStore((state) => state.factions);
+  const npcs = useGameStore((state) => state.npcs);
 
-  const selected = objects.find((object) => object.id === selectedObjectId) ?? null;
+  const activeWars = new Set<string>();
+  for (const faction of factions) {
+    for (const [otherId, relation] of Object.entries(faction.relations)) {
+      if (relation !== "war") continue;
+      activeWars.add([faction.id, otherId].sort().join(":"));
+    }
+  }
+
+  const fighting = npcs.filter((npc) => npc.state === "fighting").length;
+  const marching = npcs.filter((npc) => npc.state === "marching").length;
 
   return (
     <aside className="right-sidebar">
@@ -145,46 +71,33 @@ export function Inspector() {
           </div>
         )}
 
-        <div className="tiny-status">
-          Simulation tick <strong>{tick}</strong>
+        <div className="world-stats-strip">
+          <div>
+            <span>Tick</span>
+            <strong>{tick}</strong>
+          </div>
+          <div>
+            <span>Wars</span>
+            <strong>{activeWars.size}</strong>
+          </div>
+          <div>
+            <span>Marching</span>
+            <strong>{marching}</strong>
+          </div>
+          <div>
+            <span>Fighting</span>
+            <strong>{fighting}</strong>
+          </div>
         </div>
       </section>
 
       <TerritoryPanel />
       <QuestPanel />
 
-      <section className="panel scene-panel">
-        <div className="panel-title">Hierarchy</div>
-        <div className="scene-list">
-          {objects.length === 0 && (
-            <div className="empty-state">Add a Block, Sphere, Cylinder, Spawn, or King.</div>
-          )}
-          {objects.map((object) => (
-            <button
-              key={object.id}
-              className={selectedObjectId === object.id ? "active" : ""}
-              onClick={() => selectObject(object.id)}
-            >
-              <span className="object-icon">{object.kind === "king" ? "♛" : "◆"}</span>
-              <span>{object.name}</span>
-            </button>
-          ))}
-        </div>
-      </section>
-
-      <section className="panel">
-        <div className="panel-title">Inspector</div>
-        {selected ? (
-          <SelectedObjectInspector object={selected} />
-        ) : (
-          <div className="empty-state">Select an object to edit its transform.</div>
-        )}
-      </section>
-
       <section className="panel log-panel">
         <div className="panel-title">World Log</div>
         <div className="log-list">
-          {logs.slice(0, 12).map((entry, index) => (
+          {logs.slice(0, 18).map((entry, index) => (
             <div key={`${entry}-${index}`}>{entry}</div>
           ))}
         </div>
