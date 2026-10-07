@@ -38,7 +38,7 @@ export async function saveWorldToCloud(
   worldId: string,
   snapshot: SavedWorld
 ): Promise<string> {
-  await ensureFirebaseSession();
+  const user = await ensureFirebaseSession();
   const id = cleanWorldId(worldId);
   // Firestore rejects undefined values. Round-trip through JSON so the saved
   // document is a clean JSON-like snapshot and optional fields are omitted.
@@ -46,28 +46,30 @@ export async function saveWorldToCloud(
   const worldRef = doc(firestore, "worlds", id);
   const stateRef = doc(firestore, "worlds", id, "state", "current");
 
-  await Promise.all([
-    setDoc(
-      worldRef,
-      {
-        name: jsonSnapshot.worldName,
-        mode: jsonSnapshot.worldMode,
-        seed: jsonSnapshot.seed,
-        tick: jsonSnapshot.tick,
-        version: jsonSnapshot.version,
-        updatedAt: serverTimestamp()
-      },
-      { merge: true }
-    ),
-    setDoc(
-      stateRef,
-      {
-        snapshot: jsonSnapshot,
-        updatedAt: serverTimestamp()
-      },
-      { merge: true }
-    )
-  ]);
+  // Write the owned world metadata first so Firestore rules can authorize
+  // writes to the nested state document against the parent owner UID.
+  await setDoc(
+    worldRef,
+    {
+      name: jsonSnapshot.worldName,
+      mode: jsonSnapshot.worldMode,
+      seed: jsonSnapshot.seed,
+      tick: jsonSnapshot.tick,
+      version: jsonSnapshot.version,
+      ownerUid: user.uid,
+      updatedAt: serverTimestamp()
+    },
+    { merge: true }
+  );
+
+  await setDoc(
+    stateRef,
+    {
+      snapshot: jsonSnapshot,
+      updatedAt: serverTimestamp()
+    },
+    { merge: true }
+  );
 
   return id;
 }
