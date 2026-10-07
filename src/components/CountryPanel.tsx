@@ -20,6 +20,7 @@ const debuffs: Array<{ kind: NationEffectKind; label: string }> = [
 export function CountryPanel() {
   const factions = useGameStore((state) => state.factions);
   const npcs = useGameStore((state) => state.npcs);
+  const civilizations = useGameStore((state) => state.civilizations);
   const selectedFactionId = useGameStore((state) => state.selectedFactionId);
   const supportedFactionId = useGameStore((state) => state.supportedFactionId);
   const selectedSubdivisionId = useGameStore((state) => state.selectedSubdivisionId);
@@ -75,6 +76,17 @@ export function CountryPanel() {
     ? factions.find((faction) => faction.id === selected.controlledBy)
     : null;
   const supported = supportedFactionId === selected.id;
+  const civilization = civilizations.find(
+    (item) => item.id === selected.civilizationId
+  );
+  const civilizationPeople = npcs.filter(
+    (npc) =>
+      npc.state !== "dead" &&
+      npc.civilizationId === selected.civilizationId
+  );
+  const averageLoyalty =
+    civilizationPeople.reduce((sum, npc) => sum + npc.loyalty, 0) /
+    Math.max(1, civilizationPeople.length);
 
   const countryNpcs = npcs
     .filter((npc) => npc.factionId === selected.id && npc.state !== "dead")
@@ -287,6 +299,50 @@ export function CountryPanel() {
           </div>
         ))}
       </div>
+
+      {civilization && (
+        <>
+          <div className="section-label">Civilization memory</div>
+          <div className="civilization-card">
+            <div className="civilization-heading">
+              <div>
+                <strong>{civilization.name}</strong>
+                <span>{civilization.adjective} identity</span>
+              </div>
+              <span className={selected.controlledBy ? "civ-status occupied" : "civ-status active"}>
+                {selected.controlledBy ? "Occupied · identity survives" : "Active"}
+              </span>
+            </div>
+
+            <div className="civilization-stats">
+              <div>
+                <span>Loyal people</span>
+                <strong>{civilizationPeople.length}</strong>
+              </div>
+              <div>
+                <span>Avg loyalty</span>
+                <strong>{Math.round(averageLoyalty)}%</strong>
+              </div>
+              <div>
+                <span>Revivals</span>
+                <strong>{civilization.revivalCount}</strong>
+              </div>
+            </div>
+
+            <p>
+              If this state is conquered, its civilization remains in civilians and
+              descendants. Loyal people can restore the homeland later or found a
+              successor such as New {civilization.name} somewhere else.
+            </p>
+
+            <div className="civilization-history">
+              {civilization.history.slice(-5).reverse().map((entry, index) => (
+                <div key={`${entry}-${index}`}>{entry}</div>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
 
       <div className="section-label">Flags</div>
       <div className="flag-grid">
