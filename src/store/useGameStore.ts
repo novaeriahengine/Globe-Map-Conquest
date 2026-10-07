@@ -70,7 +70,11 @@ interface GameStore {
     factionId: string,
     policy: "local" | "balanced" | "settler"
   ) => void;
-  seedPopulation: (factionId: string, count: number) => void;
+  seedPopulation: (
+    factionId: string,
+    count: number,
+    territoryId?: string | null
+  ) => void;
   adjustNation: (
     factionId: string,
     field: "army" | "treasury" | "stability",
@@ -1122,10 +1126,23 @@ export const useGameStore = create<GameStore>((set, get) => {
       )
     })),
 
-  seedPopulation: (factionId, rawCount) =>
+  seedPopulation: (factionId, rawCount, territoryId = null) =>
     set((state) => {
       const faction = state.factions.find((item) => item.id === factionId);
       if (!faction) return state;
+
+      const territory = territoryId
+        ? state.territories.find((item) => item.id === territoryId)
+        : null;
+      const spawnPoint: LatLon =
+        territory && territory.points.length
+          ? [
+              territory.points.reduce((sum, point) => sum + point[0], 0) /
+                territory.points.length,
+              territory.points.reduce((sum, point) => sum + point[1], 0) /
+                territory.points.length
+            ]
+          : [faction.lat, faction.lon];
 
       const count = Math.max(2, Math.min(10_000, Math.round(rawCount)));
       const trackedCount = Math.min(count, 240);
@@ -1134,7 +1151,15 @@ export const useGameStore = create<GameStore>((set, get) => {
       for (let index = 0; index < trackedCount; index += 1) {
         const npc = makeNpc(faction, state.catalog, index);
         npc.populationWeight = count / trackedCount;
-        npc.tags = Array.from(new Set([...(npc.tags ?? []), "Founding Population"]));
+        npc.lat = spawnPoint[0] + ((index % 7) - 3) * 0.08;
+        npc.lon = spawnPoint[1] + ((Math.floor(index / 7) % 7) - 3) * 0.08;
+        npc.tags = Array.from(
+          new Set([
+            ...(npc.tags ?? []),
+            "Founding Population",
+            territory?.name ?? faction.capital ?? faction.name
+          ])
+        );
         founders.push(npc);
       }
 
@@ -1167,7 +1192,7 @@ export const useGameStore = create<GameStore>((set, get) => {
             : item
         ),
         logs: [
-          `Seeded ${faction.name} with ${count.toLocaleString()} simulated people represented by ${trackedCount} tracked founder NPCs.`,
+          `Seeded ${faction.name} with ${count.toLocaleString()} simulated people at ${territory?.name ?? faction.capital ?? faction.name}, represented by ${trackedCount} tracked founder NPCs.`,
           ...state.logs
         ].slice(0, 120)
       };
