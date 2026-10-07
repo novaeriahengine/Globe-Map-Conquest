@@ -108,7 +108,7 @@ export function Inspector() {
           onChange={(event) => setWorldName(event.target.value)}
         />
 
-        <div className="segmented">
+        <div className="segmented three">
           <button
             className={worldMode === "earth" ? "active" : ""}
             onClick={() => setWorldMode("earth")}
@@ -119,11 +119,17 @@ export function Inspector() {
             className={worldMode === "procedural" ? "active" : ""}
             onClick={() => setWorldMode("procedural")}
           >
-            Procedural
+            Planet
+          </button>
+          <button
+            className={worldMode === "sandbox" ? "active" : ""}
+            onClick={() => setWorldMode("sandbox")}
+          >
+            Sandbox
           </button>
         </div>
 
-        {worldMode === "procedural" && (
+        {worldMode !== "earth" && (
           <div className="seed-row">
             <input
               type="number"
