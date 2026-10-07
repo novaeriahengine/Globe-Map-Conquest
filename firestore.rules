@@ -2,21 +2,36 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Worlds are readable by the browser so the world picker can list public worlds.
-    // Writes require Firebase Anonymous Auth. There is no visible login screen.
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function ownsWorld(worldId) {
+      return signedIn() &&
+        get(/databases/$(database)/documents/worlds/$(worldId)).data.ownerUid == request.auth.uid;
+    }
+
     match /worlds/{worldId} {
+      // Public reads make discoverable worlds possible in the startup picker.
       allow read: if true;
-      allow create, update, delete: if request.auth != null;
+
+      // Anonymous Auth creates a stable invisible UID in the browser.
+      // A world can only be created/updated by its owner.
+      allow create: if signedIn() &&
+        request.resource.data.ownerUid == request.auth.uid;
+      allow update, delete: if signedIn() &&
+        resource.data.ownerUid == request.auth.uid &&
+        request.resource.data.ownerUid == resource.data.ownerUid;
 
       match /{document=**} {
         allow read: if true;
-        allow create, update, delete: if request.auth != null;
+        allow create, update, delete: if ownsWorld(worldId);
       }
     }
 
     match /catalogs/{catalogId} {
       allow read: if true;
-      allow create, update: if request.auth != null;
+      allow create, update: if signedIn();
       allow delete: if false;
     }
   }
