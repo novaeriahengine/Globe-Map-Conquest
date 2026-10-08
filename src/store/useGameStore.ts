@@ -3,8 +3,11 @@ import { DEFAULT_CATALOG, DEFAULT_QUESTS } from "../data/catalogDefaults";
 import { createInitialFactions } from "../game/countries";
 import { latLonToXYZ, seededColor } from "../game/geo";
 import type {
+  ActiveWar,
   CivilizationRecord,
   ConflictScenario,
+  DiplomaticIncident,
+  DiplomaticMemory,
   EditorTool,
   Era,
   Faction,
@@ -16,6 +19,7 @@ import type {
   NationEffectKind,
   NationFocus,
   NpcUnit,
+  IncidentType,
   ObjectKind,
   Quest,
   Relation,
@@ -49,6 +53,8 @@ interface GameStore {
   selectedTerritoryId: string | null;
   npcs: NpcUnit[];
   quests: Quest[];
+  incidents: DiplomaticIncident[];
+  wars: ActiveWar[];
   catalog: NameCatalog;
   selectedObjectId: string | null;
   selectedFactionId: string | null;
@@ -100,6 +106,7 @@ interface GameStore {
   setFactionFlag: (factionId: string, preset: FlagPresetId) => void;
   setFactionColor: (factionId: string, color: string) => void;
   setRelation: (aId: string, bId: string, relation: Relation) => void;
+  provokeConflict: (aId: string, bId: string) => void;
   spawnKing: (factionId: string) => void;
   beginTerritoryDraw: () => void;
   addTerritoryPoint: (point: LatLon) => void;
