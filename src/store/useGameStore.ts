@@ -418,6 +418,184 @@ function focusLabel(focus: NationFocus) {
   return labels[focus];
 }
 
+function ensureDiplomaticMemory(
+  faction: Faction,
+  otherId: string
+): DiplomaticMemory {
+  if (!faction.diplomacy) faction.diplomacy = {};
+  const existing = faction.diplomacy[otherId];
+  if (existing) return existing;
+
+  const memory: DiplomaticMemory = {
+    tension: 12,
+    trust: 45,
+    lastIncidentTick: null,
+    lastWarTick: null
+  };
+  faction.diplomacy[otherId] = memory;
+  return memory;
+}
+
+function pairTension(a: Faction, b: Faction) {
+  const aMemory = ensureDiplomaticMemory(a, b.id);
+  const bMemory = ensureDiplomaticMemory(b, a.id);
+  return (aMemory.tension + bMemory.tension) / 2;
+}
+
+function changePairDiplomacy(
+  a: Faction,
+  b: Faction,
+  tensionDelta: number,
+  trustDelta: number,
+  tick: number,
+  markIncident = false
+) {
+  const aMemory = ensureDiplomaticMemory(a, b.id);
+  const bMemory = ensureDiplomaticMemory(b, a.id);
+
+  for (const memory of [aMemory, bMemory]) {
+    memory.tension = Math.max(0, Math.min(100, memory.tension + tensionDelta));
+    memory.trust = Math.max(0, Math.min(100, memory.trust + trustDelta));
+    if (markIncident) memory.lastIncidentTick = tick;
+  }
+}
+
+function incidentDetails(
+  type: IncidentType,
+  actor: Faction,
+  target: Faction
+) {
+  const templates: Record<
+    IncidentType,
+    { title: string; description: string; severity: number; tensionDelta: number }
+  > = {
+    "border-clash": {
+      title: `Border clash between ${actor.name} and ${target.name}`,
+      description: `Patrols from ${actor.name} and ${target.name} exchanged fire in a disputed border zone. Both governments blamed the other side and began moving troops toward the frontier.`,
+      severity: 58,
+      tensionDelta: 24
+    },
+    assassination: {
+      title: `${target.name} blames ${actor.name} for an assassination`,
+      description: `A senior ${target.name} official was assassinated. Intelligence leaks pointed toward agents connected to ${actor.name}, triggering public outrage and emergency security talks.`,
+      severity: 86,
+      tensionDelta: 38
+    },
+    "naval-incident": {
+      title: `Naval incident involving ${actor.name} and ${target.name}`,
+      description: `Warships from ${actor.name} and ${target.name} collided during a tense interception. Casualties and conflicting claims turned the encounter into an international crisis.`,
+      severity: 72,
+      tensionDelta: 31
+    },
+    embargo: {
+      title: `${actor.name} imposes an embargo on ${target.name}`,
+      description: `${actor.name} cut strategic trade with ${target.name}, accusing it of hostile economic pressure. ${target.name} called the embargo an act of aggression.`,
+      severity: 46,
+      tensionDelta: 19
+    },
+    "territorial-claim": {
+      title: `${actor.name} renews a claim against ${target.name}`,
+      description: `${actor.name} formally claimed territory administered by ${target.name}. Demonstrations, military exercises and competing maps pushed the dispute into a dangerous new phase.`,
+      severity: 63,
+      tensionDelta: 27
+    },
+    "alliance-crisis": {
+      title: `Alliance crisis draws in ${actor.name} and ${target.name}`,
+      description: `A confrontation involving treaty partners forced ${actor.name} and ${target.name} to choose sides. Emergency summits began while both blocs prepared contingency plans.`,
+      severity: 76,
+      tensionDelta: 32
+    },
+    ultimatum: {
+      title: `${actor.name} issues an ultimatum to ${target.name}`,
+      description: `${actor.name} demanded concessions from ${target.name} under threat of military action. ${target.name} rejected the deadline and ordered partial mobilization.`,
+      severity: 82,
+      tensionDelta: 36
+    },
+    "rebellion-support": {
+      title: `${target.name} accuses ${actor.name} of backing rebels`,
+      description: `${target.name} presented evidence that weapons and money from ${actor.name} were reaching insurgents inside its territory. Diplomatic relations rapidly deteriorated.`,
+      severity: 68,
+      tensionDelta: 29
+    }
+  };
+
+  return templates[type];
+}
+
+function chooseIncidentType(
+  actor: Faction,
+  target: Faction,
+  tick: number,
+  worldWar = false
+): IncidentType {
+  if (worldWar) {
+    const major: IncidentType[] = [
+      "assassination",
+      "naval-incident",
+      "alliance-crisis",
+      "ultimatum"
+    ];
+    const index = Math.floor(
+      deterministicRoll(`${actor.id}:${target.id}:world-cause`, tick) *
+        major.length
+    );
+    return major[index] ?? "alliance-crisis";
+  }
+
+  const nearby: IncidentType[] = [
+    "border-clash",
+    "territorial-claim",
+    "embargo",
+    "rebellion-support",
+    "naval-incident"
+  ];
+  const index = Math.floor(
+    deterministicRoll(`${actor.id}:${target.id}:incident`, tick) *
+      nearby.length
+  );
+  return nearby[index] ?? "border-clash";
+}
+
+function createIncident(
+  actor: Faction,
+  target: Faction,
+  tick: number,
+  type: IncidentType
+): DiplomaticIncident {
+  const details = incidentDetails(type, actor, target);
+  return {
+    id: makeId("incident"),
+    type,
+    title: details.title,
+    description: details.description,
+    actorId: actor.id,
+    targetId: target.id,
+    createdTick: tick,
+    severity: details.severity,
+    tensionDelta: details.tensionDelta,
+    resolved: false
+  };
+}
+
+function warNameFromIncident(
+  incident: DiplomaticIncident,
+  actor: Faction,
+  target: Faction,
+  worldWar = false
+) {
+  if (worldWar) {
+    return incident.type === "assassination"
+      ? "The Assassination Crisis"
+      : incident.type === "naval-incident"
+        ? "The Ocean Crisis"
+        : incident.type === "ultimatum"
+          ? "The Great Ultimatum War"
+          : "The Alliance Crisis War";
+  }
+
+  return `${actor.name}–${target.name} War`;
+}
+
 
 function proceduralLandValue(lat: number, lon: number, seed: number) {
   return (
