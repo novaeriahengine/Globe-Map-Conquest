@@ -15,6 +15,16 @@ export type NationFocus =
   | "diplomacy"
   | "naval";
 export type IntegrationPolicy = "local" | "balanced" | "settler";
+export type IncidentType =
+  | "border-clash"
+  | "assassination"
+  | "naval-incident"
+  | "embargo"
+  | "territorial-claim"
+  | "alliance-crisis"
+  | "ultimatum"
+  | "rebellion-support";
+export type WarStatus = "mobilizing" | "war" | "peace-talks" | "ended";
 export type EditorTool = "select" | "move" | "rotate" | "scale" | "territory";
 export type ObjectKind = "block" | "sphere" | "cylinder" | "spawn" | "king";
 export type Relation = "neutral" | "allied" | "war";
@@ -79,6 +89,42 @@ export interface CivilizationRecord {
   history: string[];
 }
 
+export interface DiplomaticMemory {
+  tension: number;
+  trust: number;
+  lastIncidentTick?: number | null;
+  lastWarTick?: number | null;
+}
+
+export interface DiplomaticIncident {
+  id: string;
+  type: IncidentType;
+  title: string;
+  description: string;
+  actorId: string;
+  targetId: string;
+  createdTick: number;
+  severity: number;
+  tensionDelta: number;
+  resolved: boolean;
+}
+
+export interface ActiveWar {
+  id: string;
+  name: string;
+  status: WarStatus;
+  createdTick: number;
+  startsTick: number;
+  endedTick?: number | null;
+  causeIncidentId: string;
+  primaryAttackerId: string;
+  primaryDefenderId: string;
+  attackerIds: string[];
+  defenderIds: string[];
+  attackerAllianceName?: string | null;
+  defenderAllianceName?: string | null;
+}
+
 export interface MilitaryProfile {
   army: number;
   navy: number;
@@ -118,6 +164,7 @@ export interface Faction {
   townCount?: number;
   integrationProgress?: number;
   military?: MilitaryProfile;
+  diplomacy?: Record<string, DiplomaticMemory>;
 }
 
 export interface TerritoryPatch {
@@ -214,6 +261,8 @@ export interface SavedWorld {
   territories: TerritoryPatch[];
   npcs: NpcUnit[];
   quests: Quest[];
+  incidents?: DiplomaticIncident[];
+  wars?: ActiveWar[];
   logs: string[];
   tick: number;
 }
