@@ -312,6 +312,7 @@ function normalizeFactionCivilization(faction: Faction): Faction {
     cityCount: faction.cityCount ?? Math.max(2, Math.round(population / 2_500_000)),
     townCount: faction.townCount ?? Math.max(8, Math.round(population / 220_000)),
     integrationProgress: faction.integrationProgress ?? 55,
+    diplomacy: faction.diplomacy ?? {},
     military:
       faction.military ?? {
         army: activeArmy,
@@ -676,6 +677,7 @@ function createProceduralFactions(
       cityCount: 1,
       townCount: 1,
       integrationProgress: 45,
+      diplomacy: {},
       military: {
         army,
         navy: 0,
@@ -1008,6 +1010,8 @@ function upgradeSnapshot(snapshot: SavedWorld | LegacySavedWorldV1): SavedWorld 
     territories: [],
     npcs: [],
     quests: DEFAULT_QUESTS.map((quest) => ({ ...quest })),
+    incidents: [],
+    wars: [],
     logs: snapshot.logs,
     tick: snapshot.tick
   };
@@ -1035,6 +1039,8 @@ export const useGameStore = create<GameStore>((set, get) => {
   selectedTerritoryId: null,
   npcs: [],
   quests: DEFAULT_QUESTS.map((quest) => ({ ...quest })),
+  incidents: [],
+  wars: [],
   catalog: DEFAULT_CATALOG,
   selectedObjectId: null,
   selectedFactionId: "USA",
@@ -1289,6 +1295,8 @@ export const useGameStore = create<GameStore>((set, get) => {
       selectedTerritoryId: null,
       npcs: initialNpcs,
       quests: DEFAULT_QUESTS.map((quest) => ({ ...quest })),
+      incidents: [],
+      wars: [],
       selectedObjectId: null,
       selectedFactionId: factions[0]?.id ?? null,
       selectedSubdivisionId: null,
@@ -2735,6 +2743,8 @@ export const useGameStore = create<GameStore>((set, get) => {
       territories: state.territories,
       npcs: state.npcs,
       quests: state.quests,
+      incidents: state.incidents,
+      wars: state.wars,
       logs: state.logs,
       tick: state.tick
     };
@@ -2761,6 +2771,8 @@ export const useGameStore = create<GameStore>((set, get) => {
       selectedTerritoryId: null,
       npcs: snapshot.npcs,
       quests: snapshot.quests,
+      incidents: snapshot.incidents ?? [],
+      wars: snapshot.wars ?? [],
       logs: [source, ...snapshot.logs].slice(0, 120),
       tick: snapshot.tick,
       selectedObjectId: null,
@@ -2821,6 +2833,8 @@ export const useGameStore = create<GameStore>((set, get) => {
       selectedTerritoryId: null,
       npcs: [],
       quests: DEFAULT_QUESTS.map((quest) => ({ ...quest })),
+      incidents: [],
+      wars: [],
       selectedObjectId: null,
       selectedFactionId: "USA",
       selectedSubdivisionId: null,
