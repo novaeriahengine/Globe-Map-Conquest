@@ -1394,15 +1394,14 @@ export const useGameStore = create<GameStore>((set, get) => {
     if (!aId || !bId || aId === bId) return;
 
     set((state) => {
-      const a = state.factions.find((faction) => faction.id === aId);
-      const b = state.factions.find((faction) => faction.id === bId);
+      const factions = state.factions.map((faction) => ({
+        ...normalizeFactionCivilization(faction),
+        relations: { ...faction.relations },
+        diplomacy: { ...(faction.diplomacy ?? {}) }
+      }));
+      const a = factions.find((faction) => faction.id === aId);
+      const b = factions.find((faction) => faction.id === bId);
       if (!a || !b) return state;
-
-      let npcs = state.npcs;
-      if (relation === "war") {
-        npcs = ensureSquad(npcs, a, state.catalog, 8);
-        npcs = ensureSquad(npcs, b, state.catalog, 8);
-      }
 
       const allianceName =
         relation === "allied"
@@ -1413,27 +1412,88 @@ export const useGameStore = create<GameStore>((set, get) => {
             )
           : null;
 
+      a.relations[b.id] = relation;
+      b.relations[a.id] = relation;
+
+      if (relation === "allied") {
+        a.allianceName = a.allianceName ?? allianceName;
+        b.allianceName = b.allianceName ?? allianceName;
+        changePairDiplomacy(a, b, -18, 22, state.tick);
+      } else if (relation === "neutral") {
+        changePairDiplomacy(a, b, -26, 6, state.tick);
+      } else {
+        changePairDiplomacy(a, b, 35, -30, state.tick);
+        const aMemory = ensureDiplomaticMemory(a, b.id);
+        const bMemory = ensureDiplomaticMemory(b, a.id);
+        aMemory.lastWarTick = state.tick;
+        bMemory.lastWarTick = state.tick;
+      }
+
       return {
-        factions: state.factions.map((faction) => {
-          if (faction.id === aId) {
-            return {
-              ...faction,
-              allianceName: relation === "allied" ? allianceName : faction.allianceName,
-              relations: { ...faction.relations, [bId]: relation }
-            };
-          }
-          if (faction.id === bId) {
-            return {
-              ...faction,
-              allianceName: relation === "allied" ? allianceName : faction.allianceName,
-              relations: { ...faction.relations, [aId]: relation }
-            };
-          }
-          return faction;
-        }),
-        npcs,
+        factions,
         logs: [
           `${a.name} ${relationLabel(relation)} ${b.name}${allianceName ? ` as the ${allianceName}` : ""}.`,
+          ...state.logs
+        ].slice(0, 120)
+      };
+    });
+  },
+
+  provokeConflict: (aId, bId) => {
+    if (!aId || !bId || aId === bId) return;
+
+    set((state) => {
+      const factions = state.factions.map((faction) => ({
+        ...normalizeFactionCivilization(faction),
+        relations: { ...faction.relations },
+        diplomacy: { ...(faction.diplomacy ?? {}) }
+      }));
+      const a = factions.find((faction) => faction.id === aId);
+      const b = factions.find((faction) => faction.id === bId);
+      if (!a || !b) return state;
+
+      const existingWar = state.wars.some(
+        (war) =>
+          war.status !== "ended" &&
+          ((war.attackerIds.includes(a.id) && war.defenderIds.includes(b.id)) ||
+            (war.attackerIds.includes(b.id) && war.defenderIds.includes(a.id)))
+      );
+      if (existingWar) return state;
+
+      const type = chooseIncidentType(a, b, state.tick);
+      const incident = createIncident(a, b, state.tick, type);
+      changePairDiplomacy(
+        a,
+        b,
+        incident.tensionDelta,
+        -Math.round(incident.tensionDelta * 0.72),
+        state.tick,
+        true
+      );
+
+      const startsTick = state.tick + 8;
+      const war: ActiveWar = {
+        id: makeId("war"),
+        name: warNameFromIncident(incident, a, b),
+        status: "mobilizing",
+        createdTick: state.tick,
+        startsTick,
+        causeIncidentId: incident.id,
+        primaryAttackerId: a.id,
+        primaryDefenderId: b.id,
+        attackerIds: [a.id],
+        defenderIds: [b.id],
+        attackerAllianceName: a.allianceName ?? null,
+        defenderAllianceName: b.allianceName ?? null
+      };
+
+      return {
+        factions,
+        incidents: [...state.incidents, incident].slice(-120),
+        wars: [...state.wars, war].slice(-40),
+        playMode: true,
+        logs: [
+          `CRISIS: ${incident.title}. ${a.name} and ${b.name} are mobilizing. If diplomacy fails, war begins at tick ${startsTick}.`,
           ...state.logs
         ].slice(0, 120)
       };
