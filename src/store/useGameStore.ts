@@ -2308,6 +2308,14 @@ export const useGameStore = create<GameStore>((set, get) => {
         legacyNames: [...civilization.legacyNames],
         history: [...civilization.history]
       }));
+      let incidents = (state.incidents ?? []).map((incident) => ({ ...incident }));
+      let wars = (state.wars ?? []).map((war) => ({
+        ...war,
+        attackerIds: [...war.attackerIds],
+        defenderIds: [...war.defenderIds],
+        frontProgress: { ...(war.frontProgress ?? {}) }
+      }));
+      let garrisons = (state.garrisons ?? []).map((garrison) => ({ ...garrison }));
 
       const nextTick = state.tick + 1;
       const eraConfig = eraSettings(state.era);
@@ -2465,17 +2473,16 @@ export const useGameStore = create<GameStore>((set, get) => {
       const warEvents: string[] = [];
       const processed = new Set<string>();
 
-      // Organic diplomacy remains active even during larger scenarios. Only a
-      // small number of relations change at once so the whole planet does not
-      // instantly collapse into universal war.
-      if (nextTick % 8 === 0) {
+      // Diplomacy now moves slowly. Neutral countries build tension or trust
+      // first; war requires an incident and a mobilization phase.
+      if (nextTick % 24 === 0) {
         const sovereign = nextFactions.filter((faction) => !faction.controlledBy);
         if (sovereign.length > 1) {
           const actor =
             sovereign[
-              Math.abs(Math.floor(nextTick / 8 + state.seed)) % sovereign.length
+              Math.abs(Math.floor(nextTick / 24 + state.seed)) % sovereign.length
             ];
-          const nearby = nearestNations(actor, sovereign, 10);
+          const nearby = nearestNations(actor, sovereign, 8);
           const target =
             nearby[
               Math.floor(
@@ -2487,82 +2494,213 @@ export const useGameStore = create<GameStore>((set, get) => {
           if (target) {
             const relation = actor.relations[target.id] ?? "neutral";
             const roll = deterministicRoll(
-              `${actor.id}:${target.id}:${state.conflictScenario}`,
+              `${actor.id}:${target.id}:${nextTick}:diplomacy`,
               nextTick
             );
-            const distance = geographicDistance(actor, target);
+            const memory = ensureDiplomaticMemory(actor, target.id);
+            const reverse = ensureDiplomaticMemory(target, actor.id);
+            const currentTension = (memory.tension + reverse.tension) / 2;
             const diplomacyBonus =
               actor.focus === "diplomacy" || target.focus === "diplomacy"
-                ? 0.16
-                : 0;
-            const militaryPressure =
-              actor.focus === "military" ? 0.1 : 0;
-            const scenarioPressure =
-              state.conflictScenario === "world-war"
                 ? 0.12
-                : state.conflictScenario === "regional-war"
-                  ? 0.05
-                  : 0;
+                : 0;
 
             if (
               relation === "neutral" &&
-              roll < 0.28 * eraConfig.diplomacyRate + diplomacyBonus
+              currentTension < 45 &&
+              roll < 0.16 + diplomacyBonus
             ) {
-              actor.relations[target.id] = "allied";
-              target.relations[actor.id] = "allied";
               const allianceName = choose(
                 state.catalog.allianceNames,
                 "Mutual Defense Pact",
                 roll
               );
+              actor.relations[target.id] = "allied";
+              target.relations[actor.id] = "allied";
               actor.allianceName = actor.allianceName ?? allianceName;
               target.allianceName = target.allianceName ?? allianceName;
+              changePairDiplomacy(actor, target, -10, 18, nextTick);
               diplomacyEvents.push(
-                `${actor.name} and ${target.name} formed the ${allianceName}.`
+                `${actor.name} and ${target.name} signed the ${allianceName}.`
               );
             } else if (
               relation === "neutral" &&
-              distance < 48 &&
-              roll >
-                0.91 -
-                  militaryPressure -
-                  scenarioPressure +
-                  diplomacyBonus * 0.5
+              currentTension < 72 &&
+              roll > 0.88 - (actor.focus === "military" ? 0.05 : 0)
             ) {
-              actor.relations[target.id] = "war";
-              target.relations[actor.id] = "war";
-              diplomacyEvents.push(
-                `${actor.name} entered a new war with nearby ${target.name}.`
+              const recentIncident = incidents.some(
+                (incident) =>
+                  !incident.resolved &&
+                  ((incident.actorId === actor.id &&
+                    incident.targetId === target.id) ||
+                    (incident.actorId === target.id &&
+                      incident.targetId === actor.id)) &&
+                  nextTick - incident.createdTick < 36
               );
 
-              const supportingAlly = nearestNations(actor, sovereign, 16).find(
-                (candidate) =>
-                  candidate.relations[actor.id] === "allied" &&
-                  candidate.id !== target.id &&
-                  deterministicRoll(candidate.id + target.id, nextTick) > 0.45
-              );
-              if (supportingAlly) {
-                supportingAlly.relations[target.id] = "war";
-                target.relations[supportingAlly.id] = "war";
+              if (!recentIncident) {
+                const incident = createIncident(
+                  actor,
+                  target,
+                  nextTick,
+                  chooseIncidentType(actor, target, nextTick)
+                );
+                incidents.push(incident);
+                changePairDiplomacy(
+                  actor,
+                  target,
+                  incident.tensionDelta,
+                  -Math.round(incident.tensionDelta * 0.55),
+                  nextTick,
+                  true
+                );
                 diplomacyEvents.push(
-                  `${supportingAlly.name} entered the war in support of ${actor.name}.`
+                  `CRISIS: ${incident.title}. ${incident.description}`
                 );
               }
-            } else if (relation === "allied" && roll > 0.985) {
+            } else if (relation === "allied" && roll > 0.994) {
               actor.relations[target.id] = "neutral";
               target.relations[actor.id] = "neutral";
+              changePairDiplomacy(actor, target, 6, -18, nextTick);
               diplomacyEvents.push(
-                `${actor.name} and ${target.name} ended their alliance.`
-              );
-            } else if (relation === "war" && roll < 0.045 + diplomacyBonus) {
-              actor.relations[target.id] = "neutral";
-              target.relations[actor.id] = "neutral";
-              diplomacyEvents.push(
-                `${actor.name} and ${target.name} agreed to peace.`
+                `${actor.name} and ${target.name} allowed their alliance to collapse after months of disputes.`
               );
             }
           }
         }
+      }
+
+      // Unresolved incidents can cool down, or escalate into a real mobilization.
+      for (const incident of incidents) {
+        if (incident.resolved) continue;
+        const actor = byId.get(incident.actorId);
+        const target = byId.get(incident.targetId);
+        if (!actor || !target) {
+          incident.resolved = true;
+          continue;
+        }
+
+        const age = nextTick - incident.createdTick;
+        const tension = pairTension(actor, target);
+        const alreadyAtWar = wars.some(
+          (war) =>
+            war.status !== "ended" &&
+            ((war.attackerIds.includes(actor.id) &&
+              war.defenderIds.includes(target.id)) ||
+              (war.attackerIds.includes(target.id) &&
+                war.defenderIds.includes(actor.id)))
+        );
+
+        if (!alreadyAtWar && age >= 10 && tension >= 72) {
+          const escalation = deterministicRoll(
+            `${incident.id}:escalation`,
+            nextTick
+          );
+          if (escalation > 0.54 || incident.severity >= 80) {
+            const startsTick = nextTick + 8;
+            wars.push({
+              id: makeId("war"),
+              name: warNameFromIncident(incident, actor, target),
+              status: "mobilizing",
+              createdTick: nextTick,
+              startsTick,
+              causeIncidentId: incident.id,
+              primaryAttackerId: actor.id,
+              primaryDefenderId: target.id,
+              attackerIds: [actor.id],
+              defenderIds: [target.id],
+              attackerAllianceName: actor.allianceName ?? null,
+              defenderAllianceName: target.allianceName ?? null,
+              frontProgress: { [`${actor.id}->${target.id}`]: 0 },
+              summary: incident.description
+            });
+            diplomacyEvents.push(
+              `${actor.name} and ${target.name} began full mobilization after the ${incident.title.toLowerCase()}. Combat may start at tick ${startsTick}.`
+            );
+            incident.resolved = true;
+          }
+        }
+
+        if (!incident.resolved && age >= 28) {
+          incident.resolved = true;
+          changePairDiplomacy(actor, target, -18, 4, nextTick);
+          diplomacyEvents.push(
+            `The ${incident.title.toLowerCase()} cooled without a war.`
+          );
+        }
+      }
+
+      // Mobilization gives the player time to see why a war is happening.
+      for (const war of wars) {
+        if (war.status !== "mobilizing" || nextTick < war.startsTick) continue;
+
+        const attacker = byId.get(war.primaryAttackerId);
+        const defender = byId.get(war.primaryDefenderId);
+        if (!attacker || !defender) {
+          war.status = "ended";
+          war.endedTick = nextTick;
+          continue;
+        }
+
+        const primaryTension = pairTension(attacker, defender);
+        if (primaryTension < 55) {
+          war.status = "ended";
+          war.endedTick = nextTick;
+          diplomacyEvents.push(
+            `${war.name} was avoided after emergency diplomacy reduced tensions.`
+          );
+          continue;
+        }
+
+        war.status = "war";
+        for (const attackerId of war.attackerIds) {
+          const member = byId.get(attackerId);
+          if (!member) continue;
+          const targetId =
+            war.defenderIds
+              .map((id) => byId.get(id))
+              .filter((item): item is Faction => Boolean(item))
+              .sort(
+                (a, b) =>
+                  geographicDistance(member, a) -
+                  geographicDistance(member, b)
+              )[0]?.id ?? war.primaryDefenderId;
+          const target = byId.get(targetId);
+          if (!target) continue;
+          member.relations[target.id] = "war";
+          target.relations[member.id] = "war";
+          ensureDiplomaticMemory(member, target.id).lastWarTick = nextTick;
+          ensureDiplomaticMemory(target, member.id).lastWarTick = nextTick;
+        }
+
+        garrisons = garrisons.map((garrison) => {
+          if (war.attackerIds.includes(garrison.factionId)) {
+            const target = byId.get(war.primaryDefenderId);
+            return target
+              ? {
+                  ...garrison,
+                  order: "attack" as const,
+                  targetFactionId: target.id,
+                  targetLat: target.lat,
+                  targetLon: target.lon
+                }
+              : garrison;
+          }
+          if (war.defenderIds.includes(garrison.factionId)) {
+            return {
+              ...garrison,
+              order: "hold" as const,
+              targetFactionId: null,
+              targetLat: garrison.homeLat,
+              targetLon: garrison.homeLon
+            };
+          }
+          return garrison;
+        });
+
+        diplomacyEvents.push(
+          `${war.name} has begun. ${war.attackerAllianceName ?? attacker.name} is now fighting ${war.defenderAllianceName ?? defender.name}.`
+        );
       }
 
       for (const faction of nextFactions) {
