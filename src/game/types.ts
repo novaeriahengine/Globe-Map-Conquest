@@ -25,10 +25,18 @@ export type IncidentType =
   | "ultimatum"
   | "rebellion-support";
 export type WarStatus = "mobilizing" | "war" | "peace-talks" | "ended";
-export type EditorTool = "select" | "move" | "rotate" | "scale" | "territory";
+export type EditorTool =
+  | "select"
+  | "move"
+  | "rotate"
+  | "scale"
+  | "territory"
+  | "nation";
 export type ObjectKind = "block" | "sphere" | "cylinder" | "spawn" | "king";
 export type Relation = "neutral" | "allied" | "war";
 export type NpcState = "idle" | "marching" | "fighting" | "dead";
+export type GarrisonBranch = "land" | "sea" | "air";
+export type GarrisonOrder = "hold" | "move" | "attack" | "support";
 
 export type FlagPresetId =
   | "ocean-tricolor"
@@ -123,6 +131,25 @@ export interface ActiveWar {
   defenderIds: string[];
   attackerAllianceName?: string | null;
   defenderAllianceName?: string | null;
+  frontProgress?: Record<string, number>;
+  summary?: string;
+}
+
+export interface Garrison {
+  id: string;
+  factionId: string;
+  name: string;
+  branch: GarrisonBranch;
+  size: number;
+  lat: number;
+  lon: number;
+  homeLat: number;
+  homeLon: number;
+  order: GarrisonOrder;
+  targetFactionId?: string | null;
+  targetLat?: number | null;
+  targetLon?: number | null;
+  readiness: number;
 }
 
 export interface MilitaryProfile {
@@ -250,6 +277,7 @@ export interface SavedWorld {
   worldMode: WorldMode;
   viewMode?: ViewMode;
   supportedFactionId?: string | null;
+  playerFactionId?: string | null;
   workspaceMode?: WorkspaceMode;
   era?: Era;
   conflictScenario?: ConflictScenario;
@@ -260,6 +288,7 @@ export interface SavedWorld {
   civilizations: CivilizationRecord[];
   territories: TerritoryPatch[];
   npcs: NpcUnit[];
+  garrisons?: Garrison[];
   quests: Quest[];
   incidents?: DiplomaticIncident[];
   wars?: ActiveWar[];
