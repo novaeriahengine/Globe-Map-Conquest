@@ -1141,11 +1141,105 @@ export function Map2D() {
     });
   }, [byId, factions]);
 
+  const garrisonMarkers = useMemo(
+    () =>
+      garrisons.map((garrison) => {
+        const [x, y] = flatProject(garrison.lat, garrison.lon);
+        const faction = byId.get(garrison.factionId);
+        return {
+          ...garrison,
+          x,
+          y,
+          emoji:
+            garrison.branch === "land"
+              ? "🪖"
+              : garrison.branch === "sea"
+                ? "⚓"
+                : "✈",
+          color: faction?.color ?? "#dbe7f3",
+          countryEmoji: faction?.emoji ?? "🏳️"
+        };
+      }),
+    [byId, garrisons]
+  );
+
+  const frontOverlays = useMemo(() => {
+    const result: Array<{
+      id: string;
+      attackerId: string;
+      defenderId: string;
+      x: number;
+      y: number;
+      progress: number;
+      color: string;
+      label: string;
+    }> = [];
+
+    for (const war of warsState) {
+      if (war.status !== "war") continue;
+      for (const [key, progress] of Object.entries(war.frontProgress ?? {})) {
+        const [attackerId, defenderId] = key.split("->");
+        const attacker = byId.get(attackerId);
+        const defender = byId.get(defenderId);
+        if (!attacker || !defender || progress <= 0) continue;
+        const [x, y] = flatProject(defender.lat, defender.lon);
+        result.push({
+          id: `${war.id}-${key}`,
+          attackerId,
+          defenderId,
+          x,
+          y,
+          progress,
+          color: attacker.color,
+          label: `${Math.round(progress)}%`
+        });
+      }
+    }
+    return result;
+  }, [byId, warsState]);
+
+  const mobilizationMarkers = useMemo(() => {
+    return warsState
+      .filter((war) => war.status === "mobilizing")
+      .map((war) => {
+        const a = byId.get(war.primaryAttackerId);
+        const b = byId.get(war.primaryDefenderId);
+        if (!a || !b) return null;
+        let dLon = b.lon - a.lon;
+        if (dLon > 180) dLon -= 360;
+        if (dLon < -180) dLon += 360;
+        const midLat = (a.lat + b.lat) / 2;
+        const midLon = ((a.lon + dLon / 2 + 540) % 360) - 180;
+        const [x, y] = flatProject(midLat, midLon);
+        const incident = incidents.find(
+          (item) => item.id === war.causeIncidentId
+        );
+        return {
+          id: war.id,
+          x,
+          y,
+          title: incident?.title ?? war.name,
+          startsTick: war.startsTick
+        };
+      })
+      .filter(Boolean) as Array<{
+      id: string;
+      x: number;
+      y: number;
+      title: string;
+      startsTick: number;
+    }>;
+  }, [byId, incidents, warsState]);
+
   return (
     <div className="map2d-shell">
       <svg
         ref={svgRef}
-        className={tool === "territory" ? "map2d drawing" : "map2d"}
+        className={
+          tool === "territory" || tool === "nation"
+            ? "map2d drawing"
+            : "map2d"
+        }
         viewBox={`${viewX} ${viewY} ${viewW} ${viewH}`}
         preserveAspectRatio="xMidYMid meet"
         onWheel={(event) => {
@@ -1287,6 +1381,68 @@ export function Map2D() {
           );
         })}
 
+        {frontOverlays.map((front) => {
+          const radius = Math.max(7, 5 + front.progress * 0.16);
+          return (
+            <g
+              key={front.id}
+              className="front-control"
+              onClick={() => selectFaction(front.defenderId)}
+            >
+              <circle
+                cx={front.x}
+                cy={front.y}
+                r={radius}
+                fill={front.color}
+                fillOpacity={0.18 + Math.min(0.38, front.progress / 220)}
+                stroke={front.color}
+                strokeWidth={2 / Math.sqrt(zoom)}
+                strokeDasharray="5 3"
+                vectorEffect="non-scaling-stroke"
+              />
+              <circle
+                cx={front.x}
+                cy={front.y}
+                r={Math.max(3.2, radius * 0.38)}
+                fill={front.color}
+                fillOpacity={0.78}
+              />
+              <text
+                x={front.x}
+                y={front.y + 2 / Math.sqrt(zoom)}
+                textAnchor="middle"
+                fontSize={6.5 / Math.sqrt(zoom)}
+                fill="#ffffff"
+                className="front-progress-label"
+              >
+                {front.label}
+              </text>
+            </g>
+          );
+        })}
+
+        {mobilizationMarkers.map((marker) => (
+          <g key={marker.id} className="mobilization-marker">
+            <circle
+              cx={marker.x}
+              cy={marker.y}
+              r={8 / Math.sqrt(zoom)}
+              fill="#503818"
+              stroke="#ffc45d"
+              strokeWidth={1.5 / Math.sqrt(zoom)}
+              vectorEffect="non-scaling-stroke"
+            />
+            <text
+              x={marker.x}
+              y={marker.y + 2.5 / Math.sqrt(zoom)}
+              textAnchor="middle"
+              fontSize={7 / Math.sqrt(zoom)}
+            >
+              ⚠
+            </text>
+          </g>
+        ))}
+
         {territories.map((territory) => {
           if (territory.points.length < 3) return null;
           const path =
@@ -1409,6 +1565,48 @@ export function Map2D() {
               );
             });
           })}
+
+        {garrisonMarkers
+          .filter((marker) => visible(marker.x, marker.y, 24))
+          .map((marker) => (
+            <g
+              key={marker.id}
+              className={`garrison-marker ${marker.branch} ${marker.order}`}
+              onClick={() => selectFaction(marker.factionId)}
+            >
+              <rect
+                x={marker.x - 6 / Math.sqrt(zoom)}
+                y={marker.y - 5 / Math.sqrt(zoom)}
+                width={12 / Math.sqrt(zoom)}
+                height={10 / Math.sqrt(zoom)}
+                rx={2 / Math.sqrt(zoom)}
+                fill="rgba(8, 14, 22, .9)"
+                stroke={marker.color}
+                strokeWidth={1.25 / Math.sqrt(zoom)}
+                vectorEffect="non-scaling-stroke"
+              />
+              <text
+                x={marker.x}
+                y={marker.y + 2 / Math.sqrt(zoom)}
+                textAnchor="middle"
+                fontSize={6.2 / Math.sqrt(zoom)}
+              >
+                {marker.emoji}
+              </text>
+              {zoom >= 2.2 && (
+                <text
+                  x={marker.x}
+                  y={marker.y + 11 / Math.sqrt(zoom)}
+                  textAnchor="middle"
+                  fontSize={5 / Math.sqrt(zoom)}
+                  fill="#ffffff"
+                  className="army-size-label"
+                >
+                  {marker.countryEmoji} {formatCompact(marker.size)}
+                </text>
+              )}
+            </g>
+          ))}
 
         {armyMarkers
           .filter((marker) => visible(marker.x, marker.y, 30))
