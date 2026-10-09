@@ -2873,6 +2873,188 @@ export const useGameStore = create<GameStore>((set, get) => {
         }
       }
 
+      // Garrison simulation: land, sea, and air groups move independently.
+      for (const garrison of garrisons) {
+        const owner = byId.get(garrison.factionId);
+        if (!owner || owner.controlledBy) continue;
+
+        const target =
+          garrison.targetFactionId
+            ? byId.get(garrison.targetFactionId)
+            : null;
+
+        if (garrison.order === "hold") {
+          garrison.readiness = Math.min(100, garrison.readiness + 0.18);
+          continue;
+        }
+
+        const targetLat = target?.lat ?? garrison.targetLat ?? garrison.homeLat;
+        const targetLon = target?.lon ?? garrison.targetLon ?? garrison.homeLon;
+        const branchSpeed =
+          garrison.branch === "air"
+            ? 1.85
+            : garrison.branch === "sea"
+              ? 0.82
+              : 0.48;
+        const speed = branchSpeed * eraConfig.movement;
+        const distance = angleDistance(
+          [garrison.lat, garrison.lon],
+          [targetLat, targetLon]
+        );
+
+        if (distance > 1.6) {
+          moveGarrisonToward(garrison, targetLat, targetLon, speed);
+          garrison.readiness = Math.max(35, garrison.readiness - 0.04);
+        } else {
+          garrison.readiness = Math.min(100, garrison.readiness + 0.08);
+        }
+      }
+
+      // Visible front control. Countries are no longer instantly painted over by
+      // one battle result; occupation advances across a front from 0–100%.
+      for (const war of wars) {
+        if (war.status !== "war") continue;
+
+        const advanceSide = (attackers: string[], defenders: string[]) => {
+          for (const attackerId of attackers) {
+            const attacker = byId.get(attackerId);
+            if (!attacker || attacker.controlledBy) continue;
+
+            const defender =
+              defenders
+                .map((id) => byId.get(id))
+                .filter((item): item is Faction => Boolean(item))
+                .filter((item) => !item.controlledBy)
+                .sort(
+                  (a, b) =>
+                    geographicDistance(attacker, a) -
+                    geographicDistance(attacker, b)
+                )[0];
+            if (!defender) continue;
+
+            const key = `${attacker.id}->${defender.id}`;
+            const current = war.frontProgress?.[key] ?? 0;
+            const distance = geographicDistance(attacker, defender);
+
+            const deployed = garrisons.filter(
+              (garrison) =>
+                garrison.factionId === attacker.id &&
+                garrison.order === "attack" &&
+                garrison.targetFactionId === defender.id
+            );
+            const defending = garrisons.filter(
+              (garrison) => garrison.factionId === defender.id
+            );
+
+            const branchPower = (garrison: Garrison, attacking: boolean) => {
+              const readiness = Math.max(0.35, garrison.readiness / 100);
+              const branchFactor =
+                garrison.branch === "land"
+                  ? 1
+                  : garrison.branch === "air"
+                    ? eraConfig.airPower * 0.9
+                    : eraConfig.navalPower * (distance > 20 ? 1.1 : 0.45);
+              return garrison.size * readiness * Math.max(0.05, branchFactor) *
+                (attacking ? 1 : 1.05);
+            };
+
+            const attackPower =
+              deployed.reduce(
+                (sum, garrison) => sum + branchPower(garrison, true),
+                0
+              ) + attacker.army * 0.08;
+            const defensePower =
+              defending.reduce(
+                (sum, garrison) => sum + branchPower(garrison, false),
+                0
+              ) + defender.army * 0.1;
+
+            const ratio = attackPower / Math.max(1, defensePower);
+            const doctrineBonus =
+              attacker.military?.doctrine === "aggressive"
+                ? 0.18
+                : attacker.military?.doctrine === "maneuver"
+                  ? 0.12
+                  : 0;
+            const delta = Math.max(
+              -0.8,
+              Math.min(2.4, (ratio - 0.72) * 1.15 + doctrineBonus)
+            );
+            const nextProgress = Math.max(
+              0,
+              Math.min(100, current + delta)
+            );
+
+            if (!war.frontProgress) war.frontProgress = {};
+            war.frontProgress[key] = nextProgress;
+
+            const oldMilestone = Math.floor(current / 25);
+            const newMilestone = Math.floor(nextProgress / 25);
+            if (
+              newMilestone > oldMilestone &&
+              nextProgress < 100 &&
+              nextProgress >= 25
+            ) {
+              warEvents.push(
+                `${attacker.name} now controls about ${Math.round(nextProgress)}% of the active front against ${defender.name}.`
+              );
+            }
+
+            if (nextProgress >= 100 && !defender.controlledBy) {
+              defender.controlledBy = attacker.controlledBy ?? attacker.id;
+              defender.occupationStartedTick = nextTick;
+              defender.stability = Math.max(18, defender.stability * 0.45);
+              defender.relations[attacker.id] = "neutral";
+              attacker.relations[defender.id] = "neutral";
+              for (const garrison of garrisons) {
+                if (garrison.factionId === defender.id) {
+                  garrison.order = "hold";
+                  garrison.targetFactionId = null;
+                  garrison.readiness = Math.max(20, garrison.readiness * 0.55);
+                }
+              }
+              civilizations = civilizations.map((civilization) =>
+                civilization.id === defender.civilizationId
+                  ? {
+                      ...civilization,
+                      extinctionTick: nextTick,
+                      history: [
+                        ...civilization.history,
+                        `${defender.name} was fully occupied by ${attacker.name} at tick ${nextTick} after a progressive land campaign.`
+                      ].slice(-160)
+                    }
+                  : civilization
+              );
+              warEvents.push(
+                `FRONT COLLAPSE: ${attacker.name} completed the occupation of ${defender.name}.`
+              );
+            }
+          }
+        };
+
+        advanceSide(war.attackerIds, war.defenderIds);
+        advanceSide(war.defenderIds, war.attackerIds);
+
+        const attackersStanding = war.attackerIds.some(
+          (id) => !byId.get(id)?.controlledBy
+        );
+        const defendersStanding = war.defenderIds.some(
+          (id) => !byId.get(id)?.controlledBy
+        );
+
+        if (!attackersStanding || !defendersStanding) {
+          war.status = "ended";
+          war.endedTick = nextTick;
+          const cause = incidents.find(
+            (incident) => incident.id === war.causeIncidentId
+          );
+          if (cause) cause.resolved = true;
+          warEvents.push(
+            `${war.name} ended after one coalition lost all sovereign members.`
+          );
+        }
+      }
+
       for (const attacker of nextFactions) {
         for (const [targetId, relation] of Object.entries(attacker.relations)) {
           if (relation !== "war") continue;
@@ -3026,7 +3208,7 @@ export const useGameStore = create<GameStore>((set, get) => {
           );
 
           if (
-            defender.army <= defenderCollapse &&
+            defender.army <= 0 &&
             attacker.army > defender.army * 1.25
           ) {
             defender.controlledBy = attacker.controlledBy ?? attacker.id;
@@ -3052,7 +3234,7 @@ export const useGameStore = create<GameStore>((set, get) => {
               `${attacker.name} conquered ${defender.name}. The ${civilizations.find((item) => item.id === defender.civilizationId)?.adjective ?? defender.name} civilization survived the fall.`
             );
           } else if (
-            attacker.army <= attackerCollapse &&
+            attacker.army <= 0 &&
             defender.army > attacker.army * 1.25
           ) {
             attacker.controlledBy = defender.controlledBy ?? defender.id;
