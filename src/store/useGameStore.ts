@@ -45,6 +45,9 @@ interface GameStore {
   era: Era;
   conflictScenario: ConflictScenario;
   populationSeed: number;
+  nationPlacementSize: number;
+  nationPlacementName: string;
+  nationPlacementColor: string;
   seed: number;
   playMode: boolean;
   tool: EditorTool;
@@ -73,6 +76,11 @@ interface GameStore {
   setPlayerFaction: (factionId: string | null) => void;
   setEra: (era: Era) => void;
   setConflictScenario: (scenario: ConflictScenario) => void;
+  setNationPlacement: (config: {
+    size?: number;
+    name?: string;
+    color?: string;
+  }) => void;
   supportFaction: (factionId: string | null) => void;
   applyNationEffect: (factionId: string, kind: NationEffectKind) => void;
   clearNationEffects: (factionId: string) => void;
@@ -1116,6 +1124,9 @@ export const useGameStore = create<GameStore>((set, get) => {
   era: "modern",
   conflictScenario: "organic",
   populationSeed: 100,
+  nationPlacementSize: 8,
+  nationPlacementName: "",
+  nationPlacementColor: "#4f8cff",
   seed: 48271,
   playMode: false,
   tool: "select",
@@ -1182,6 +1193,18 @@ export const useGameStore = create<GameStore>((set, get) => {
 
   setConflictScenario: (conflictScenario) =>
     set({ conflictScenario }),
+
+  setNationPlacement: (config) =>
+    set((state) => ({
+      nationPlacementSize:
+        config.size == null
+          ? state.nationPlacementSize
+          : Math.max(1, Math.min(120, Math.round(config.size))),
+      nationPlacementName:
+        config.name == null ? state.nationPlacementName : config.name,
+      nationPlacementColor:
+        config.color == null ? state.nationPlacementColor : config.color
+    })),
 
   supportFaction: (supportedFactionId) =>
     set((state) => ({
@@ -1386,6 +1409,9 @@ export const useGameStore = create<GameStore>((set, get) => {
       era: worldMode === "earth" ? "modern" : "medieval",
       conflictScenario: "organic",
       populationSeed: 100,
+      nationPlacementSize: 8,
+      nationPlacementName: "",
+      nationPlacementColor: "#4f8cff",
       seed: worldSeed,
       playMode: false,
       tool: "select",
@@ -3186,6 +3212,9 @@ export const useGameStore = create<GameStore>((set, get) => {
       era: "modern",
       conflictScenario: "organic",
       populationSeed: 100,
+      nationPlacementSize: 8,
+      nationPlacementName: "",
+      nationPlacementColor: "#4f8cff",
       seed: 48271,
       playMode: false,
       tool: "select",
