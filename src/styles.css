@@ -2859,3 +2859,33 @@ button.play-style-card {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+
+.deployment-line {
+  fill: none;
+  stroke-width: 1.2;
+  stroke-dasharray: 5 4;
+  opacity: .58;
+  pointer-events: none;
+  animation: deploymentMarch 1.1s linear infinite;
+}
+
+.deployment-line.move {
+  stroke: #72b9ff;
+}
+
+.deployment-line.attack {
+  stroke: #ff6473;
+}
+
+.deployment-line.support {
+  stroke: #68d7a0;
+}
+
+.deployment-line.air {
+  stroke-dasharray: 2 4;
+}
+
+@keyframes deploymentMarch {
+  to { stroke-dashoffset: -18; }
+}
