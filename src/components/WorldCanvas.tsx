@@ -1641,6 +1641,34 @@ export function Map2D() {
           })}
 
         {garrisonMarkers
+          .filter(
+            (marker) =>
+              marker.order !== "hold" &&
+              Boolean(marker.targetFactionId)
+          )
+          .map((marker) => {
+            const target = marker.targetFactionId
+              ? byId.get(marker.targetFactionId)
+              : undefined;
+            if (!target) return null;
+            let [targetX, targetY] = flatProject(target.lat, target.lon);
+            if (Math.abs(targetX - marker.x) > FLAT_W / 2) {
+              targetX += targetX > marker.x ? -FLAT_W : FLAT_W;
+            }
+            return (
+              <line
+                key={`${marker.id}-order-line`}
+                x1={marker.x}
+                y1={marker.y}
+                x2={targetX}
+                y2={targetY}
+                className={`deployment-line ${marker.order} ${marker.branch}`}
+                vectorEffect="non-scaling-stroke"
+              />
+            );
+          })}
+
+        {garrisonMarkers
           .filter((marker) => visible(marker.x, marker.y, 24))
           .map((marker) => (
             <g
