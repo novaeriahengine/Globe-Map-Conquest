@@ -18,6 +18,19 @@ export function WarRoomPanel() {
     .slice()
     .reverse();
   const recentIncidents = incidents.slice(-5).reverse();
+  const occupiedCount = factions.filter((faction) => Boolean(faction.controlledBy)).length;
+  const empireCounts = new Map<string, number>();
+  for (const faction of factions) {
+    if (!faction.controlledBy) continue;
+    empireCounts.set(
+      faction.controlledBy,
+      (empireCounts.get(faction.controlledBy) ?? 0) + 1
+    );
+  }
+  const topEmpire = [...empireCounts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([id, count]) => ({ faction: byId.get(id), count }))
+    .find((entry) => entry.faction);
 
   return (
     <section className="panel war-room-panel">
@@ -27,6 +40,25 @@ export function WarRoomPanel() {
           <strong>War Room</strong>
         </div>
         <span className="war-count">{activeWars.length} active</span>
+      </div>
+
+      <div className="conquest-summary">
+        <div>
+          <span>Sovereign</span>
+          <strong>{factions.length - occupiedCount}</strong>
+        </div>
+        <div>
+          <span>Occupied</span>
+          <strong>{occupiedCount}</strong>
+        </div>
+        <div>
+          <span>Largest empire</span>
+          <strong>
+            {topEmpire?.faction
+              ? `${topEmpire.faction.emoji} ${topEmpire.faction.name} +${topEmpire.count}`
+              : "None"}
+          </strong>
+        </div>
       </div>
 
       {activeWars.length === 0 && (
