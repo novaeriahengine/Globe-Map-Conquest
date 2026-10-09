@@ -182,6 +182,20 @@ export function CountryPanel() {
         </button>
       )}
 
+      {selected.allianceName && (
+        <div className="alliance-banner">
+          <span>ALLIANCE</span>
+          <strong>{selected.allianceName}</strong>
+          <small>
+            {factions.filter(
+              (faction) =>
+                faction.id !== selected.id &&
+                faction.allianceName === selected.allianceName
+            ).length + 1} member nations
+          </small>
+        </div>
+      )}
+
       <div className="stat-grid nation-main-stats">
         <div><span>Population</span><strong>{compact(selected.population ?? 0)}</strong></div>
         <div><span>Active military</span><strong>{compact(selected.army)}</strong></div>
