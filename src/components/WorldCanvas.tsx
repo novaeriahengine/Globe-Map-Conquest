@@ -1316,47 +1316,107 @@ export function Map2D() {
                 : faction;
               const selected = selectedFactionId === faction.id;
               const supported = supportedFactionId === faction.id;
+              const activeFront = frontOverlays
+                .filter((front) => front.defenderId === faction.id)
+                .sort((a, b) => b.progress - a.progress)[0];
+              const frontAttacker = activeFront
+                ? byId.get(activeFront.attackerId)
+                : undefined;
 
               return (
                 <g key={`${numeric}-${featureIndex}`}>
                   {flatFeaturePaths(item).flatMap((path, pathIndex) =>
-                    [0, -FLAT_W].map((shift) => (
-                      <path
-                        key={`${pathIndex}-${shift}`}
-                        d={path}
-                        transform={shift ? `translate(${shift} 0)` : undefined}
-                        fill={controller?.color ?? faction.color}
-                        fillOpacity={selected ? 1 : 0.84}
-                        fillRule="evenodd"
-                        stroke={
-                          supported
-                            ? "#ffd166"
-                            : selected
-                              ? "#ffffff"
-                              : "#172331"
-                        }
-                        strokeWidth={(supported ? 2.5 : selected ? 1.8 : 0.65) / zoom}
-                        vectorEffect="non-scaling-stroke"
-                        onPointerDown={(event) => {
-                          if (tool === "territory") {
-                            event.stopPropagation();
-                            addPoint(event.clientX, event.clientY);
-                          } else if (tool === "nation") {
-                            event.stopPropagation();
-                            createNationFromPointer(event.clientX, event.clientY);
-                          }
-                        }}
-                        onClick={() => {
-                          if (
-                            tool !== "territory" &&
-                            tool !== "nation" &&
-                            !movedRef.current
-                          ) {
-                            selectFaction(faction.id);
-                          }
-                        }}
-                      />
-                    ))
+                    [0, -FLAT_W].map((shift) => {
+                      const gradientId = `front-fill-${faction.id}-${featureIndex}-${pathIndex}-${shift}`;
+                      const attackerFromWest =
+                        frontAttacker && frontAttacker.lon <= faction.lon;
+                      const progress = Math.max(
+                        0,
+                        Math.min(100, activeFront?.progress ?? 0)
+                      );
+
+                      return (
+                        <g key={`${pathIndex}-${shift}`}>
+                          <path
+                            d={path}
+                            transform={shift ? `translate(${shift} 0)` : undefined}
+                            fill={controller?.color ?? faction.color}
+                            fillOpacity={selected ? 1 : 0.84}
+                            fillRule="evenodd"
+                            stroke={
+                              supported
+                                ? "#ffd166"
+                                : selected
+                                  ? "#ffffff"
+                                  : "#172331"
+                            }
+                            strokeWidth={(supported ? 2.5 : selected ? 1.8 : 0.65) / zoom}
+                            vectorEffect="non-scaling-stroke"
+                            onPointerDown={(event) => {
+                              if (tool === "territory") {
+                                event.stopPropagation();
+                                addPoint(event.clientX, event.clientY);
+                              } else if (tool === "nation") {
+                                event.stopPropagation();
+                                createNationFromPointer(event.clientX, event.clientY);
+                              }
+                            }}
+                            onClick={() => {
+                              if (
+                                tool !== "territory" &&
+                                tool !== "nation" &&
+                                !movedRef.current
+                              ) {
+                                selectFaction(faction.id);
+                              }
+                            }}
+                          />
+
+                          {activeFront && frontAttacker && !faction.controlledBy && (
+                            <>
+                              <defs>
+                                <linearGradient
+                                  id={gradientId}
+                                  x1={attackerFromWest ? "0%" : "100%"}
+                                  x2={attackerFromWest ? "100%" : "0%"}
+                                  y1="0%"
+                                  y2="0%"
+                                >
+                                  <stop
+                                    offset="0%"
+                                    stopColor={frontAttacker.color}
+                                    stopOpacity={0.82}
+                                  />
+                                  <stop
+                                    offset={`${progress}%`}
+                                    stopColor={frontAttacker.color}
+                                    stopOpacity={0.82}
+                                  />
+                                  <stop
+                                    offset={`${Math.min(100, progress + 1)}%`}
+                                    stopColor={frontAttacker.color}
+                                    stopOpacity={0}
+                                  />
+                                  <stop
+                                    offset="100%"
+                                    stopColor={frontAttacker.color}
+                                    stopOpacity={0}
+                                  />
+                                </linearGradient>
+                              </defs>
+                              <path
+                                d={path}
+                                transform={shift ? `translate(${shift} 0)` : undefined}
+                                fill={`url(#${gradientId})`}
+                                fillRule="evenodd"
+                                pointerEvents="none"
+                                opacity={0.9}
+                              />
+                            </>
+                          )}
+                        </g>
+                      );
+                    })
                   )}
                 </g>
               );
