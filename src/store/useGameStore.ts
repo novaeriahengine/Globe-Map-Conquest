@@ -895,6 +895,63 @@ function ensureSquad(
   return next;
 }
 
+function createInitialGarrisons(factions: Faction[]): Garrison[] {
+  const result: Garrison[] = [];
+
+  for (const faction of factions) {
+    const military = faction.military;
+    if (!military) continue;
+
+    const entries: Array<[GarrisonBranch, number, number, number]> = [
+      ["land", military.army, 0, 0],
+      ["sea", military.navy, -2.4, 2.4],
+      ["air", military.airForce, 1.8, -1.8]
+    ];
+
+    for (const [branch, size, dLat, dLon] of entries) {
+      if (size <= 0) continue;
+      result.push({
+        id: makeId("garrison"),
+        factionId: faction.id,
+        name:
+          branch === "land"
+            ? `${faction.name} Field Army`
+            : branch === "sea"
+              ? `${faction.name} Fleet`
+              : `${faction.name} Air Wing`,
+        branch,
+        size,
+        lat: faction.lat + dLat,
+        lon: faction.lon + dLon,
+        homeLat: faction.lat + dLat,
+        homeLon: faction.lon + dLon,
+        order: "hold",
+        targetFactionId: null,
+        targetLat: null,
+        targetLon: null,
+        readiness: 82
+      });
+    }
+  }
+
+  return result;
+}
+
+function moveGarrisonToward(
+  garrison: Garrison,
+  lat: number,
+  lon: number,
+  speed: number
+) {
+  const [nextLat, nextLon] = moveToward(
+    [garrison.lat, garrison.lon],
+    [lat, lon],
+    speed
+  );
+  garrison.lat = nextLat;
+  garrison.lon = nextLon;
+}
+
 function angleDistance(a: LatLon, b: LatLon) {
   const dLat = a[0] - b[0];
   let dLon = a[1] - b[1];
