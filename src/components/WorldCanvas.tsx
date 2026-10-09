@@ -146,6 +146,10 @@ function CountryRegion({
   const selectFaction = useGameStore((state) => state.selectFaction);
   const tool = useGameStore((state) => state.tool);
   const addTerritoryPoint = useGameStore((state) => state.addTerritoryPoint);
+  const createNationAt = useGameStore((state) => state.createNationAt);
+  const nationPlacementSize = useGameStore((state) => state.nationPlacementSize);
+  const nationPlacementName = useGameStore((state) => state.nationPlacementName);
+  const nationPlacementColor = useGameStore((state) => state.nationPlacementColor);
 
   const faction = factions.find((entry) => entry.id === factionId);
   const controller = faction?.controlledBy
@@ -183,6 +187,16 @@ function CountryRegion({
 
     if (tool === "territory") {
       addTerritoryPoint(xyzToLatLon(event.point.x, event.point.y, event.point.z));
+      return;
+    }
+
+    if (tool === "nation") {
+      createNationAt(
+        xyzToLatLon(event.point.x, event.point.y, event.point.z),
+        nationPlacementSize,
+        nationPlacementName,
+        nationPlacementColor
+      );
       return;
     }
 
@@ -904,6 +918,9 @@ export function Map2D() {
   const seed = useGameStore((state) => state.seed);
   const factions = useGameStore((state) => state.factions);
   const npcs = useGameStore((state) => state.npcs);
+  const garrisons = useGameStore((state) => state.garrisons);
+  const warsState = useGameStore((state) => state.wars);
+  const incidents = useGameStore((state) => state.incidents);
   const territories = useGameStore((state) => state.territories);
   const draft = useGameStore((state) => state.territoryDraft);
   const tool = useGameStore((state) => state.tool);
@@ -912,6 +929,10 @@ export function Map2D() {
   const selectFaction = useGameStore((state) => state.selectFaction);
   const selectTerritory = useGameStore((state) => state.selectTerritory);
   const addTerritoryPoint = useGameStore((state) => state.addTerritoryPoint);
+  const createNationAt = useGameStore((state) => state.createNationAt);
+  const nationPlacementSize = useGameStore((state) => state.nationPlacementSize);
+  const nationPlacementName = useGameStore((state) => state.nationPlacementName);
+  const nationPlacementColor = useGameStore((state) => state.nationPlacementColor);
 
   const features = useMemo(countryFeatures, []);
 
@@ -1003,6 +1024,20 @@ export function Map2D() {
       90 - (point.y / FLAT_H) * 180,
       (point.x / FLAT_W) * 360 - 180
     ]);
+  };
+
+  const createNationFromPointer = (clientX: number, clientY: number) => {
+    const point = screenToMap(clientX, clientY);
+    if (!point) return;
+    createNationAt(
+      [
+        90 - (point.y / FLAT_H) * 180,
+        (point.x / FLAT_W) * 360 - 180
+      ],
+      nationPlacementSize,
+      nationPlacementName,
+      nationPlacementColor
+    );
   };
 
   const visible = (x: number, y: number, padding = 18) =>
@@ -1120,11 +1155,105 @@ export function Map2D() {
     });
   }, [byId, factions]);
 
+  const garrisonMarkers = useMemo(
+    () =>
+      garrisons.map((garrison) => {
+        const [x, y] = flatProject(garrison.lat, garrison.lon);
+        const faction = byId.get(garrison.factionId);
+        return {
+          ...garrison,
+          x,
+          y,
+          emoji:
+            garrison.branch === "land"
+              ? "🪖"
+              : garrison.branch === "sea"
+                ? "⚓"
+                : "✈",
+          color: faction?.color ?? "#dbe7f3",
+          countryEmoji: faction?.emoji ?? "🏳️"
+        };
+      }),
+    [byId, garrisons]
+  );
+
+  const frontOverlays = useMemo(() => {
+    const result: Array<{
+      id: string;
+      attackerId: string;
+      defenderId: string;
+      x: number;
+      y: number;
+      progress: number;
+      color: string;
+      label: string;
+    }> = [];
+
+    for (const war of warsState) {
+      if (war.status !== "war") continue;
+      for (const [key, progress] of Object.entries(war.frontProgress ?? {})) {
+        const [attackerId, defenderId] = key.split("->");
+        const attacker = byId.get(attackerId);
+        const defender = byId.get(defenderId);
+        if (!attacker || !defender || progress <= 0) continue;
+        const [x, y] = flatProject(defender.lat, defender.lon);
+        result.push({
+          id: `${war.id}-${key}`,
+          attackerId,
+          defenderId,
+          x,
+          y,
+          progress,
+          color: attacker.color,
+          label: `${Math.round(progress)}%`
+        });
+      }
+    }
+    return result;
+  }, [byId, warsState]);
+
+  const mobilizationMarkers = useMemo(() => {
+    return warsState
+      .filter((war) => war.status === "mobilizing")
+      .map((war) => {
+        const a = byId.get(war.primaryAttackerId);
+        const b = byId.get(war.primaryDefenderId);
+        if (!a || !b) return null;
+        let dLon = b.lon - a.lon;
+        if (dLon > 180) dLon -= 360;
+        if (dLon < -180) dLon += 360;
+        const midLat = (a.lat + b.lat) / 2;
+        const midLon = ((a.lon + dLon / 2 + 540) % 360) - 180;
+        const [x, y] = flatProject(midLat, midLon);
+        const incident = incidents.find(
+          (item) => item.id === war.causeIncidentId
+        );
+        return {
+          id: war.id,
+          x,
+          y,
+          title: incident?.title ?? war.name,
+          startsTick: war.startsTick
+        };
+      })
+      .filter(Boolean) as Array<{
+      id: string;
+      x: number;
+      y: number;
+      title: string;
+      startsTick: number;
+    }>;
+  }, [byId, incidents, warsState]);
+
   return (
     <div className="map2d-shell">
       <svg
         ref={svgRef}
-        className={tool === "territory" ? "map2d drawing" : "map2d"}
+        className={
+          tool === "territory" || tool === "nation"
+            ? "map2d drawing"
+            : "map2d"
+        }
         viewBox={`${viewX} ${viewY} ${viewW} ${viewH}`}
         preserveAspectRatio="xMidYMid meet"
         onWheel={(event) => {
@@ -1134,6 +1263,10 @@ export function Map2D() {
         onPointerDown={(event) => {
           if (tool === "territory") {
             addPoint(event.clientX, event.clientY);
+            return;
+          }
+          if (tool === "nation") {
+            createNationFromPointer(event.clientX, event.clientY);
             return;
           }
 
@@ -1183,39 +1316,107 @@ export function Map2D() {
                 : faction;
               const selected = selectedFactionId === faction.id;
               const supported = supportedFactionId === faction.id;
+              const activeFront = frontOverlays
+                .filter((front) => front.defenderId === faction.id)
+                .sort((a, b) => b.progress - a.progress)[0];
+              const frontAttacker = activeFront
+                ? byId.get(activeFront.attackerId)
+                : undefined;
 
               return (
                 <g key={`${numeric}-${featureIndex}`}>
                   {flatFeaturePaths(item).flatMap((path, pathIndex) =>
-                    [0, -FLAT_W].map((shift) => (
-                      <path
-                        key={`${pathIndex}-${shift}`}
-                        d={path}
-                        transform={shift ? `translate(${shift} 0)` : undefined}
-                        fill={controller?.color ?? faction.color}
-                        fillOpacity={selected ? 1 : 0.84}
-                        fillRule="evenodd"
-                        stroke={
-                          supported
-                            ? "#ffd166"
-                            : selected
-                              ? "#ffffff"
-                              : "#172331"
-                        }
-                        strokeWidth={(supported ? 2.5 : selected ? 1.8 : 0.65) / zoom}
-                        vectorEffect="non-scaling-stroke"
-                        onPointerDown={(event) => {
-                          if (tool !== "territory") return;
-                          event.stopPropagation();
-                          addPoint(event.clientX, event.clientY);
-                        }}
-                        onClick={() => {
-                          if (tool !== "territory" && !movedRef.current) {
-                            selectFaction(faction.id);
-                          }
-                        }}
-                      />
-                    ))
+                    [0, -FLAT_W].map((shift) => {
+                      const gradientId = `front-fill-${faction.id}-${featureIndex}-${pathIndex}-${shift}`;
+                      const attackerFromWest =
+                        frontAttacker && frontAttacker.lon <= faction.lon;
+                      const progress = Math.max(
+                        0,
+                        Math.min(100, activeFront?.progress ?? 0)
+                      );
+
+                      return (
+                        <g key={`${pathIndex}-${shift}`}>
+                          <path
+                            d={path}
+                            transform={shift ? `translate(${shift} 0)` : undefined}
+                            fill={controller?.color ?? faction.color}
+                            fillOpacity={selected ? 1 : 0.84}
+                            fillRule="evenodd"
+                            stroke={
+                              supported
+                                ? "#ffd166"
+                                : selected
+                                  ? "#ffffff"
+                                  : "#172331"
+                            }
+                            strokeWidth={(supported ? 2.5 : selected ? 1.8 : 0.65) / zoom}
+                            vectorEffect="non-scaling-stroke"
+                            onPointerDown={(event) => {
+                              if (tool === "territory") {
+                                event.stopPropagation();
+                                addPoint(event.clientX, event.clientY);
+                              } else if (tool === "nation") {
+                                event.stopPropagation();
+                                createNationFromPointer(event.clientX, event.clientY);
+                              }
+                            }}
+                            onClick={() => {
+                              if (
+                                tool !== "territory" &&
+                                tool !== "nation" &&
+                                !movedRef.current
+                              ) {
+                                selectFaction(faction.id);
+                              }
+                            }}
+                          />
+
+                          {activeFront && frontAttacker && !faction.controlledBy && (
+                            <>
+                              <defs>
+                                <linearGradient
+                                  id={gradientId}
+                                  x1={attackerFromWest ? "0%" : "100%"}
+                                  x2={attackerFromWest ? "100%" : "0%"}
+                                  y1="0%"
+                                  y2="0%"
+                                >
+                                  <stop
+                                    offset="0%"
+                                    stopColor={frontAttacker.color}
+                                    stopOpacity={0.82}
+                                  />
+                                  <stop
+                                    offset={`${progress}%`}
+                                    stopColor={frontAttacker.color}
+                                    stopOpacity={0.82}
+                                  />
+                                  <stop
+                                    offset={`${Math.min(100, progress + 1)}%`}
+                                    stopColor={frontAttacker.color}
+                                    stopOpacity={0}
+                                  />
+                                  <stop
+                                    offset="100%"
+                                    stopColor={frontAttacker.color}
+                                    stopOpacity={0}
+                                  />
+                                </linearGradient>
+                              </defs>
+                              <path
+                                d={path}
+                                transform={shift ? `translate(${shift} 0)` : undefined}
+                                fill={`url(#${gradientId})`}
+                                fillRule="evenodd"
+                                pointerEvents="none"
+                                opacity={0.9}
+                              />
+                            </>
+                          )}
+                        </g>
+                      );
+                    })
                   )}
                 </g>
               );
@@ -1253,6 +1454,68 @@ export function Map2D() {
             />
           );
         })}
+
+        {frontOverlays.map((front) => {
+          const radius = Math.max(7, 5 + front.progress * 0.16);
+          return (
+            <g
+              key={front.id}
+              className="front-control"
+              onClick={() => selectFaction(front.defenderId)}
+            >
+              <circle
+                cx={front.x}
+                cy={front.y}
+                r={radius}
+                fill={front.color}
+                fillOpacity={0.18 + Math.min(0.38, front.progress / 220)}
+                stroke={front.color}
+                strokeWidth={2 / Math.sqrt(zoom)}
+                strokeDasharray="5 3"
+                vectorEffect="non-scaling-stroke"
+              />
+              <circle
+                cx={front.x}
+                cy={front.y}
+                r={Math.max(3.2, radius * 0.38)}
+                fill={front.color}
+                fillOpacity={0.78}
+              />
+              <text
+                x={front.x}
+                y={front.y + 2 / Math.sqrt(zoom)}
+                textAnchor="middle"
+                fontSize={6.5 / Math.sqrt(zoom)}
+                fill="#ffffff"
+                className="front-progress-label"
+              >
+                {front.label}
+              </text>
+            </g>
+          );
+        })}
+
+        {mobilizationMarkers.map((marker) => (
+          <g key={marker.id} className="mobilization-marker">
+            <circle
+              cx={marker.x}
+              cy={marker.y}
+              r={8 / Math.sqrt(zoom)}
+              fill="#503818"
+              stroke="#ffc45d"
+              strokeWidth={1.5 / Math.sqrt(zoom)}
+              vectorEffect="non-scaling-stroke"
+            />
+            <text
+              x={marker.x}
+              y={marker.y + 2.5 / Math.sqrt(zoom)}
+              textAnchor="middle"
+              fontSize={7 / Math.sqrt(zoom)}
+            >
+              ⚠
+            </text>
+          </g>
+        ))}
 
         {territories.map((territory) => {
           if (territory.points.length < 3) return null;
@@ -1376,6 +1639,76 @@ export function Map2D() {
               );
             });
           })}
+
+        {garrisonMarkers
+          .filter(
+            (marker) =>
+              marker.order !== "hold" &&
+              Boolean(marker.targetFactionId)
+          )
+          .map((marker) => {
+            const target = marker.targetFactionId
+              ? byId.get(marker.targetFactionId)
+              : undefined;
+            if (!target) return null;
+            let [targetX, targetY] = flatProject(target.lat, target.lon);
+            if (Math.abs(targetX - marker.x) > FLAT_W / 2) {
+              targetX += targetX > marker.x ? -FLAT_W : FLAT_W;
+            }
+            return (
+              <line
+                key={`${marker.id}-order-line`}
+                x1={marker.x}
+                y1={marker.y}
+                x2={targetX}
+                y2={targetY}
+                className={`deployment-line ${marker.order} ${marker.branch}`}
+                vectorEffect="non-scaling-stroke"
+              />
+            );
+          })}
+
+        {garrisonMarkers
+          .filter((marker) => visible(marker.x, marker.y, 24))
+          .map((marker) => (
+            <g
+              key={marker.id}
+              className={`garrison-marker ${marker.branch} ${marker.order}`}
+              onClick={() => selectFaction(marker.factionId)}
+            >
+              <rect
+                x={marker.x - 6 / Math.sqrt(zoom)}
+                y={marker.y - 5 / Math.sqrt(zoom)}
+                width={12 / Math.sqrt(zoom)}
+                height={10 / Math.sqrt(zoom)}
+                rx={2 / Math.sqrt(zoom)}
+                fill="rgba(8, 14, 22, .9)"
+                stroke={marker.color}
+                strokeWidth={1.25 / Math.sqrt(zoom)}
+                vectorEffect="non-scaling-stroke"
+              />
+              <text
+                x={marker.x}
+                y={marker.y + 2 / Math.sqrt(zoom)}
+                textAnchor="middle"
+                fontSize={6.2 / Math.sqrt(zoom)}
+              >
+                {marker.emoji}
+              </text>
+              {zoom >= 2.2 && (
+                <text
+                  x={marker.x}
+                  y={marker.y + 11 / Math.sqrt(zoom)}
+                  textAnchor="middle"
+                  fontSize={5 / Math.sqrt(zoom)}
+                  fill="#ffffff"
+                  className="army-size-label"
+                >
+                  {marker.countryEmoji} {formatCompact(marker.size)}
+                </text>
+              )}
+            </g>
+          ))}
 
         {armyMarkers
           .filter((marker) => visible(marker.x, marker.y, 30))

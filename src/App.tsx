@@ -1,12 +1,15 @@
 import { useEffect, useState } from "react";
 import { CountryPanel } from "./components/CountryPanel";
 import { Inspector } from "./components/Inspector";
+import { MilitaryPanel } from "./components/MilitaryPanel";
+import { NationCreatorPanel } from "./components/NationCreatorPanel";
 import { OnlinePanel } from "./components/OnlinePanel";
 import { PlayerPanel } from "./components/PlayerPanel";
 import { QuestPanel } from "./components/QuestPanel";
 import { SaveLoadPanel } from "./components/SaveLoadPanel";
 import { SimulationPanel } from "./components/SimulationPanel";
 import { Toolbar } from "./components/Toolbar";
+import { WarRoomPanel } from "./components/WarRoomPanel";
 import { Map2D, WorldCanvas } from "./components/WorldCanvas";
 import { WorldPicker } from "./components/WorldPicker";
 import { useGameStore } from "./store/useGameStore";
@@ -21,14 +24,11 @@ export default function App() {
   const workspaceMode = useGameStore((state) => state.workspaceMode);
   const worldName = useGameStore((state) => state.worldName);
   const era = useGameStore((state) => state.era);
+  const playerFactionId = useGameStore((state) => state.playerFactionId);
 
   useEffect(() => {
     if (!playMode || !workspaceOpen) return;
-
-    const timer = window.setInterval(() => {
-      simulateTick();
-    }, 700);
-
+    const timer = window.setInterval(() => simulateTick(), 700);
     return () => window.clearInterval(timer);
   }, [playMode, simulateTick, workspaceOpen]);
 
@@ -37,19 +37,27 @@ export default function App() {
       <>
         <SaveLoadPanel />
         <OnlinePanel />
+        <NationCreatorPanel />
         <CountryPanel />
+        <MilitaryPanel />
       </>
     ) : workspaceMode === "player" ? (
-      <PlayerPanel />
+      <>
+        <PlayerPanel />
+        <MilitaryPanel factionId={playerFactionId} />
+      </>
     ) : workspaceMode === "god" ? (
       <>
         <SimulationPanel god />
+        <NationCreatorPanel />
         <CountryPanel />
+        <MilitaryPanel />
       </>
     ) : (
       <>
         <SimulationPanel />
         <CountryPanel />
+        <MilitaryPanel />
       </>
     );
 
@@ -69,10 +77,10 @@ export default function App() {
 
         <div className="topbar-actions">
           <div className="topbar-note">
-            Living nations · families · eras · strategy · Firestore
+            Living nations · progressive fronts · garrisons · diplomacy · Firestore
           </div>
           <button className="button compact" onClick={() => setWorkspaceOpen(false)}>
-            Saves / Worlds
+            Worlds / Role
           </button>
         </div>
       </header>
@@ -81,16 +89,8 @@ export default function App() {
         <>
           <Toolbar />
 
-          <div
-            className={
-              workspaceMode === "player"
-                ? "workspace workspace-player"
-                : "workspace"
-            }
-          >
-            <aside className="left-sidebar mode-sidebar">
-              {leftPanel}
-            </aside>
+          <div className="workspace">
+            <aside className="left-sidebar mode-sidebar">{leftPanel}</aside>
 
             <section className={viewMode === "map2d" ? "viewport viewport-2d" : "viewport"}>
               {viewMode === "map2d" ? <Map2D /> : <WorldCanvas />}
@@ -112,8 +112,8 @@ export default function App() {
 
               <div className="viewport-hint">
                 {viewMode === "map2d"
-                  ? "Tap nations · drag the map · use the zoom slider · armies collapse into flag groups at long range"
-                  : "Rotate globe · zoom · tap a country · switch back to 2D for strategy and battle detail"}
+                  ? "Tap nations · drag/zoom · front circles show control % · military groups move independently on land, sea and air"
+                  : "Rotate globe · zoom · tap a country · use 2D mode for conquest fronts and garrison movement"}
               </div>
 
               {playMode && (
@@ -124,13 +124,10 @@ export default function App() {
               )}
             </section>
 
-            {workspaceMode === "editor" ? (
-              <Inspector />
-            ) : workspaceMode !== "player" ? (
-              <aside className="right-sidebar">
-                <QuestPanel />
-              </aside>
-            ) : null}
+            <aside className="right-sidebar">
+              <WarRoomPanel />
+              {workspaceMode === "editor" ? <Inspector /> : <QuestPanel />}
+            </aside>
           </div>
         </>
       )}

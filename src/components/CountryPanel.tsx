@@ -52,6 +52,7 @@ export function CountryPanel() {
   const setIntegrationPolicy = useGameStore((state) => state.setIntegrationPolicy);
   const adjustNation = useGameStore((state) => state.adjustNation);
   const setRelation = useGameStore((state) => state.setRelation);
+  const provokeConflict = useGameStore((state) => state.provokeConflict);
   const spawnKing = useGameStore((state) => state.spawnKing);
   const setFactionFlag = useGameStore((state) => state.setFactionFlag);
   const setFactionColor = useGameStore((state) => state.setFactionColor);
@@ -93,6 +94,9 @@ export function CountryPanel() {
   const relation: Relation = target
     ? selected.relations[target.id] ?? "neutral"
     : "neutral";
+  const diplomaticMemory = target
+    ? selected.diplomacy?.[target.id]
+    : undefined;
   const controller = selected.controlledBy
     ? factions.find((faction) => faction.id === selected.controlledBy)
     : null;
@@ -176,6 +180,20 @@ export function CountryPanel() {
             Occupied for {occupiedFor} ticks · tap to inspect conqueror
           </small>
         </button>
+      )}
+
+      {selected.allianceName && (
+        <div className="alliance-banner">
+          <span>ALLIANCE</span>
+          <strong>{selected.allianceName}</strong>
+          <small>
+            {factions.filter(
+              (faction) =>
+                faction.id !== selected.id &&
+                faction.allianceName === selected.allianceName
+            ).length + 1} member nations
+          </small>
+        </div>
       )}
 
       <div className="stat-grid nation-main-stats">
@@ -330,11 +348,28 @@ export function CountryPanel() {
           <button className="button compact" disabled={!target} onClick={() => target && setRelation(selected.id, target.id, "neutral")}>
             Peace
           </button>
-          <button className="button compact danger" disabled={!target} onClick={() => target && setRelation(selected.id, target.id, "war")}>
-            War
+          <button
+            className="button compact danger"
+            disabled={!target || relation === "war"}
+            onClick={() => target && provokeConflict(selected.id, target.id)}
+          >
+            Create Crisis
           </button>
         </div>
       </div>
+
+      {target && (
+        <div className="diplomatic-meter-grid">
+          <div>
+            <span>Tension</span>
+            <strong>{Math.round(diplomaticMemory?.tension ?? 12)}%</strong>
+          </div>
+          <div>
+            <span>Trust</span>
+            <strong>{Math.round(diplomaticMemory?.trust ?? 45)}%</strong>
+          </div>
+        </div>
+      )}
 
       <div className="country-color-row">
         <label>

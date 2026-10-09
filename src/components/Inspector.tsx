@@ -27,7 +27,7 @@ export function Inspector() {
   const marching = npcs.filter((npc) => npc.state === "marching").length;
 
   return (
-    <aside className="right-sidebar">
+    <div className="inspector-stack">
       <section className="panel">
         <div className="panel-title">World</div>
         <input
@@ -102,6 +102,6 @@ export function Inspector() {
           ))}
         </div>
       </section>
-    </aside>
+    </div>
   );
 }
