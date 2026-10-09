@@ -99,6 +99,11 @@ interface GameStore {
     field: "army" | "treasury" | "stability",
     amount: number
   ) => void;
+  sendNationSupport: (
+    fromId: string,
+    toId: string,
+    kind: "funds" | "troops" | "stability"
+  ) => void;
   createWorld: (mode: WorldMode, name?: string) => void;
   setSeed: (seed: number) => void;
   randomizeSeed: () => void;
@@ -1361,6 +1366,56 @@ export const useGameStore = create<GameStore>((set, get) => {
         };
       })
     })),
+
+  sendNationSupport: (fromId, toId, kind) =>
+    set((state) => {
+      if (!fromId || !toId || fromId === toId) return state;
+      const factions = state.factions.map((faction) => ({
+        ...faction,
+        relations: { ...faction.relations },
+        diplomacy: { ...(faction.diplomacy ?? {}) },
+        military: faction.military ? { ...faction.military } : faction.military
+      }));
+      const source = factions.find((faction) => faction.id === fromId);
+      const target = factions.find((faction) => faction.id === toId);
+      if (!source || !target) return state;
+
+      if (kind === "funds") {
+        const amount = Math.min(25_000, Math.max(0, source.treasury * 0.12));
+        source.treasury -= amount;
+        target.treasury += amount;
+      } else if (kind === "troops") {
+        const amount = Math.min(12_000, Math.max(0, source.army * 0.08));
+        source.army = Math.max(0, source.army - amount);
+        target.army += amount;
+        if (source.military) source.military.army = source.army;
+        if (target.military) target.military.army = target.army;
+      } else {
+        source.treasury = Math.max(0, source.treasury - 3_000);
+        target.stability = Math.min(100, target.stability + 8);
+      }
+
+      if (source.relations[target.id] !== "war") {
+        source.relations[target.id] = "allied";
+        target.relations[source.id] = "allied";
+        const pact =
+          source.allianceName ??
+          target.allianceName ??
+          choose(state.catalog.allianceNames, "Support Pact", 0.44);
+        source.allianceName = source.allianceName ?? pact;
+        target.allianceName = target.allianceName ?? pact;
+      }
+      changePairDiplomacy(source, target, -12, 16, state.tick);
+
+      return {
+        factions,
+        supportedFactionId: toId,
+        logs: [
+          `${source.name} sent ${kind} support to ${target.name}.`,
+          ...state.logs
+        ].slice(0, 160)
+      };
+    }),
 
   createWorld: (worldMode, name) => {
     const worldSeed = Math.floor(Math.random() * 999_999_999);
