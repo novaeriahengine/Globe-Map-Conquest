@@ -2271,7 +2271,7 @@ export const useGameStore = create<GameStore>((set, get) => {
       );
 
       const startsTick =
-        state.tick + (scenario === "world-war" ? 16 : 10);
+        state.tick + (scenario === "world-war" ? 22 : 16);
       const frontProgress: Record<string, number> = {};
       for (const defender of defenderSide) {
         frontProgress[`${primaryAttacker.id}->${defender.id}`] = 0;
@@ -2532,12 +2532,12 @@ export const useGameStore = create<GameStore>((set, get) => {
 
       // Diplomacy now moves slowly. Neutral countries build tension or trust
       // first; war requires an incident and a mobilization phase.
-      if (nextTick % 24 === 0) {
+      if (nextTick % 36 === 0) {
         const sovereign = nextFactions.filter((faction) => !faction.controlledBy);
         if (sovereign.length > 1) {
           const actor =
             sovereign[
-              Math.abs(Math.floor(nextTick / 24 + state.seed)) % sovereign.length
+              Math.abs(Math.floor(nextTick / 36 + state.seed)) % sovereign.length
             ];
           const nearby = nearestNations(actor, sovereign, 8);
           const target =
@@ -2592,7 +2592,7 @@ export const useGameStore = create<GameStore>((set, get) => {
                     incident.targetId === target.id) ||
                     (incident.actorId === target.id &&
                       incident.targetId === actor.id)) &&
-                  nextTick - incident.createdTick < 36
+                  nextTick - incident.createdTick < 60
               );
 
               if (!recentIncident) {
@@ -2648,13 +2648,13 @@ export const useGameStore = create<GameStore>((set, get) => {
                 war.defenderIds.includes(actor.id)))
         );
 
-        if (!alreadyAtWar && age >= 10 && tension >= 72) {
+        if (!alreadyAtWar && age >= 24 && tension >= 72) {
           const escalation = deterministicRoll(
             `${incident.id}:escalation`,
             nextTick
           );
           if (escalation > 0.54 || incident.severity >= 80) {
-            const startsTick = nextTick + 8;
+            const startsTick = nextTick + 18;
             wars.push({
               id: makeId("war"),
               name: warNameFromIncident(incident, actor, target),
@@ -2678,7 +2678,7 @@ export const useGameStore = create<GameStore>((set, get) => {
           }
         }
 
-        if (!incident.resolved && age >= 28) {
+        if (!incident.resolved && age >= 60) {
           incident.resolved = true;
           changePairDiplomacy(actor, target, -18, 4, nextTick);
           diplomacyEvents.push(
