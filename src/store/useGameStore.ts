@@ -1035,12 +1035,19 @@ function upgradeSnapshot(snapshot: SavedWorld | LegacySavedWorldV1): SavedWorld 
       ...snapshot,
       viewMode: snapshot.viewMode ?? "map2d",
       supportedFactionId: snapshot.supportedFactionId ?? null,
+      playerFactionId: snapshot.playerFactionId ?? null,
       workspaceMode: snapshot.workspaceMode ?? "play",
       era: snapshot.era ?? "modern",
       conflictScenario: snapshot.conflictScenario ?? "organic",
       populationSeed: snapshot.populationSeed ?? 100,
       factions,
       civilizations,
+      garrisons:
+        snapshot.garrisons?.length
+          ? snapshot.garrisons
+          : createInitialGarrisons(factions),
+      incidents: snapshot.incidents ?? [],
+      wars: snapshot.wars ?? [],
       npcs: snapshot.npcs.map((npc, index) => {
         const faction = factions.find((item) => item.id === npc.factionId);
         return {
@@ -1077,6 +1084,7 @@ function upgradeSnapshot(snapshot: SavedWorld | LegacySavedWorldV1): SavedWorld 
     worldMode: snapshot.worldMode,
     viewMode: "map2d",
     supportedFactionId: null,
+    playerFactionId: null,
     workspaceMode: "play",
     era: "modern",
     conflictScenario: "organic",
@@ -1087,6 +1095,7 @@ function upgradeSnapshot(snapshot: SavedWorld | LegacySavedWorldV1): SavedWorld 
     civilizations: civilizationsFromFactions(factions, snapshot.tick),
     territories: [],
     npcs: [],
+    garrisons: createInitialGarrisons(factions),
     quests: DEFAULT_QUESTS.map((quest) => ({ ...quest })),
     incidents: [],
     wars: [],
@@ -1102,6 +1111,7 @@ export const useGameStore = create<GameStore>((set, get) => {
   worldMode: "earth",
   viewMode: "map2d",
   supportedFactionId: null,
+  playerFactionId: null,
   workspaceMode: "play",
   era: "modern",
   conflictScenario: "organic",
@@ -1116,6 +1126,7 @@ export const useGameStore = create<GameStore>((set, get) => {
   territoryDraft: [],
   selectedTerritoryId: null,
   npcs: [],
+  garrisons: createInitialGarrisons(initialFactions),
   quests: DEFAULT_QUESTS.map((quest) => ({ ...quest })),
   incidents: [],
   wars: [],
@@ -1148,6 +1159,19 @@ export const useGameStore = create<GameStore>((set, get) => {
     set((state) => ({
       workspaceMode,
       logs: [`Workspace changed to ${workspaceMode} mode.`, ...state.logs].slice(0, 120)
+    })),
+
+  setPlayerFaction: (playerFactionId) =>
+    set((state) => ({
+      playerFactionId,
+      selectedFactionId: playerFactionId ?? state.selectedFactionId,
+      workspaceMode: playerFactionId ? "player" : state.workspaceMode,
+      logs: [
+        playerFactionId
+          ? `Player control assigned to ${state.factions.find((faction) => faction.id === playerFactionId)?.name ?? "nation"}.`
+          : "Player country control cleared.",
+        ...state.logs
+      ].slice(0, 120)
     })),
 
   setEra: (era) =>
