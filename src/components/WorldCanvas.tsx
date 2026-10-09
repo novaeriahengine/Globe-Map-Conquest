@@ -146,6 +146,10 @@ function CountryRegion({
   const selectFaction = useGameStore((state) => state.selectFaction);
   const tool = useGameStore((state) => state.tool);
   const addTerritoryPoint = useGameStore((state) => state.addTerritoryPoint);
+  const createNationAt = useGameStore((state) => state.createNationAt);
+  const nationPlacementSize = useGameStore((state) => state.nationPlacementSize);
+  const nationPlacementName = useGameStore((state) => state.nationPlacementName);
+  const nationPlacementColor = useGameStore((state) => state.nationPlacementColor);
 
   const faction = factions.find((entry) => entry.id === factionId);
   const controller = faction?.controlledBy
@@ -904,6 +908,9 @@ export function Map2D() {
   const seed = useGameStore((state) => state.seed);
   const factions = useGameStore((state) => state.factions);
   const npcs = useGameStore((state) => state.npcs);
+  const garrisons = useGameStore((state) => state.garrisons);
+  const warsState = useGameStore((state) => state.wars);
+  const incidents = useGameStore((state) => state.incidents);
   const territories = useGameStore((state) => state.territories);
   const draft = useGameStore((state) => state.territoryDraft);
   const tool = useGameStore((state) => state.tool);
@@ -1003,6 +1010,20 @@ export function Map2D() {
       90 - (point.y / FLAT_H) * 180,
       (point.x / FLAT_W) * 360 - 180
     ]);
+  };
+
+  const createNationFromPointer = (clientX: number, clientY: number) => {
+    const point = screenToMap(clientX, clientY);
+    if (!point) return;
+    createNationAt(
+      [
+        90 - (point.y / FLAT_H) * 180,
+        (point.x / FLAT_W) * 360 - 180
+      ],
+      nationPlacementSize,
+      nationPlacementName,
+      nationPlacementColor
+    );
   };
 
   const visible = (x: number, y: number, padding = 18) =>
@@ -1136,6 +1157,10 @@ export function Map2D() {
             addPoint(event.clientX, event.clientY);
             return;
           }
+          if (tool === "nation") {
+            createNationFromPointer(event.clientX, event.clientY);
+            return;
+          }
 
           movedRef.current = false;
           dragRef.current = {
@@ -1205,12 +1230,20 @@ export function Map2D() {
                         strokeWidth={(supported ? 2.5 : selected ? 1.8 : 0.65) / zoom}
                         vectorEffect="non-scaling-stroke"
                         onPointerDown={(event) => {
-                          if (tool !== "territory") return;
-                          event.stopPropagation();
-                          addPoint(event.clientX, event.clientY);
+                          if (tool === "territory") {
+                            event.stopPropagation();
+                            addPoint(event.clientX, event.clientY);
+                          } else if (tool === "nation") {
+                            event.stopPropagation();
+                            createNationFromPointer(event.clientX, event.clientY);
+                          }
                         }}
                         onClick={() => {
-                          if (tool !== "territory" && !movedRef.current) {
+                          if (
+                            tool !== "territory" &&
+                            tool !== "nation" &&
+                            !movedRef.current
+                          ) {
                             selectFaction(faction.id);
                           }
                         }}
