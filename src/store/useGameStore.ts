@@ -1602,6 +1602,208 @@ export const useGameStore = create<GameStore>((set, get) => {
     });
   },
 
+  createNationAt: (point, rawSize, name, color) =>
+    set((state) => {
+      const size = Math.max(1, Math.min(120, Math.round(rawSize)));
+      const half = size * 0.18;
+      const [lat, lon] = point;
+      const factionId = makeId("nation");
+      const civilizationId = makeId("civ");
+      const nationName =
+        name?.trim() ||
+        choose(
+          state.catalog.countryNames,
+          `New Nation ${state.factions.length + 1}`,
+          deterministicRoll(factionId, state.tick)
+        );
+      const nationColor = color || seededColor(factionId);
+      const territoryId = makeId("territory");
+      const army = Math.max(2_500, Math.round(size * 900));
+      const population = Math.max(10_000, Math.round(size * size * 2_400));
+
+      const faction: Faction = {
+        id: factionId,
+        name: nationName,
+        cca2: "--",
+        cca3: "NEW",
+        emoji: "🏳️",
+        capital: `${nationName} City`,
+        lat,
+        lon,
+        color: nationColor,
+        accentColor: seededColor(factionId + "-accent"),
+        army,
+        treasury: Math.max(5_000, size * 1_200),
+        stability: 68,
+        controlledBy: null,
+        rulerName: null,
+        flagPresetId: "republic",
+        allianceName: null,
+        relations: {},
+        effects: [],
+        civilizationId,
+        occupationStartedTick: null,
+        revivalCount: 0,
+        focus: "balanced",
+        integrationPolicy: "balanced",
+        population,
+        cityCount: Math.max(1, Math.round(size / 18)),
+        townCount: Math.max(1, Math.round(size / 5)),
+        integrationProgress: 50,
+        diplomacy: {},
+        military: {
+          army,
+          navy: state.era === "ancient" ? 0 : Math.round(army * 0.08),
+          airForce:
+            state.era === "modern" || state.era === "future"
+              ? Math.round(army * 0.06)
+              : 0,
+          reserves: Math.round(army * 1.7),
+          doctrine: "balanced"
+        }
+      };
+
+      const territory: TerritoryPatch = {
+        id: territoryId,
+        name: `${nationName} Homeland`,
+        parentFactionId: null,
+        ownerFactionId: factionId,
+        color: nationColor,
+        points: [
+          [Math.max(-89, lat - half), ((lon - half + 540) % 360) - 180],
+          [Math.max(-89, lat - half), ((lon + half + 540) % 360) - 180],
+          [Math.min(89, lat + half), ((lon + half + 540) % 360) - 180],
+          [Math.min(89, lat + half), ((lon - half + 540) % 360) - 180]
+        ],
+        createdAt: Date.now(),
+        genericName: false
+      };
+
+      const civilization: CivilizationRecord = {
+        id: civilizationId,
+        name: nationName,
+        adjective: civilizationAdjective(nationName),
+        foundingTick: state.tick,
+        extinctionTick: null,
+        homeland: [lat, lon],
+        color: nationColor,
+        flagPresetId: "republic",
+        legacyNames: [nationName],
+        revivalCount: 0,
+        history: [
+          `${nationName} was created at tick ${state.tick} with a ${size}×${size} map-pixel homeland.`
+        ]
+      };
+
+      const newGarrisons = createInitialGarrisons([faction]);
+
+      return {
+        factions: [...state.factions, faction],
+        civilizations: [...state.civilizations, civilization],
+        territories: [...state.territories, territory],
+        garrisons: [...state.garrisons, ...newGarrisons],
+        selectedFactionId: factionId,
+        selectedTerritoryId: territoryId,
+        tool: "select",
+        logs: [
+          `Created ${nationName} with a ${size}×${size} land block and ${population.toLocaleString()} population.`,
+          ...state.logs
+        ].slice(0, 120)
+      };
+    }),
+
+  createGarrison: (factionId, branch, rawSize) =>
+    set((state) => {
+      const faction = state.factions.find((item) => item.id === factionId);
+      if (!faction) return state;
+      const available =
+        branch === "land"
+          ? faction.military?.army ?? faction.army
+          : branch === "sea"
+            ? faction.military?.navy ?? 0
+            : faction.military?.airForce ?? 0;
+      if (available <= 0) return state;
+
+      const size = Math.max(100, Math.min(available, Math.round(rawSize)));
+      const offset =
+        branch === "land" ? [0, 0] : branch === "sea" ? [-2.4, 2.6] : [1.8, -1.7];
+      const garrison: Garrison = {
+        id: makeId("garrison"),
+        factionId,
+        name:
+          branch === "land"
+            ? `${faction.name} Army Group`
+            : branch === "sea"
+              ? `${faction.name} Task Fleet`
+              : `${faction.name} Air Group`,
+        branch,
+        size,
+        lat: faction.lat + offset[0],
+        lon: faction.lon + offset[1],
+        homeLat: faction.lat + offset[0],
+        homeLon: faction.lon + offset[1],
+        order: "hold",
+        targetFactionId: null,
+        targetLat: null,
+        targetLon: null,
+        readiness: 90
+      };
+
+      return {
+        garrisons: [...state.garrisons, garrison],
+        logs: [
+          `Created ${garrison.name} with ${size.toLocaleString()} personnel/strength.`,
+          ...state.logs
+        ].slice(0, 120)
+      };
+    }),
+
+  orderGarrison: (garrisonId, order, targetFactionId = null) => {
+    set((state) => {
+      const target = targetFactionId
+        ? state.factions.find((faction) => faction.id === targetFactionId)
+        : null;
+
+      return {
+        garrisons: state.garrisons.map((garrison) =>
+          garrison.id === garrisonId
+            ? {
+                ...garrison,
+                order,
+                targetFactionId,
+                targetLat: target?.lat ?? garrison.homeLat,
+                targetLon: target?.lon ?? garrison.homeLon
+              }
+            : garrison
+        ),
+        logs: [
+          `${state.garrisons.find((item) => item.id === garrisonId)?.name ?? "Garrison"} ordered to ${order}${target ? ` ${target.name}` : ""}.`,
+          ...state.logs
+        ].slice(0, 120)
+      };
+    });
+
+    if (order === "attack" && targetFactionId) {
+      const garrison = get().garrisons.find((item) => item.id === garrisonId);
+      if (garrison) {
+        const relation =
+          get().factions.find((item) => item.id === garrison.factionId)
+            ?.relations[targetFactionId] ?? "neutral";
+        const pending = get().wars.some(
+          (war) =>
+            war.status !== "ended" &&
+            ((war.attackerIds.includes(garrison.factionId) &&
+              war.defenderIds.includes(targetFactionId)) ||
+              (war.defenderIds.includes(garrison.factionId) &&
+                war.attackerIds.includes(targetFactionId)))
+        );
+        if (relation !== "war" && !pending) {
+          get().provokeConflict(garrison.factionId, targetFactionId);
+        }
+      }
+    }
+  },
+
   spawnKing: (factionId) => {
     const faction = get().factions.find((item) => item.id === factionId);
     if (!faction) return;
