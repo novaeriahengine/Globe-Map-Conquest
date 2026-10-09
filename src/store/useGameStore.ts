@@ -2999,9 +2999,21 @@ export const useGameStore = create<GameStore>((set, get) => {
                 garrison.order === "attack" &&
                 garrison.targetFactionId === defender.id
             );
-            const defending = garrisons.filter(
-              (garrison) => garrison.factionId === defender.id
-            );
+            const defending = garrisons.filter((garrison) => {
+              if (garrison.factionId === defender.id) return true;
+              if (
+                garrison.order !== "support" ||
+                garrison.targetFactionId !== defender.id
+              ) {
+                return false;
+              }
+              return (
+                angleDistance(
+                  [garrison.lat, garrison.lon],
+                  [defender.lat, defender.lon]
+                ) < 8
+              );
+            });
 
             const branchPower = (garrison: Garrison, attacking: boolean) => {
               const readiness = Math.max(0.35, garrison.readiness / 100);
