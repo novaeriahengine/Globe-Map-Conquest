@@ -2046,15 +2046,16 @@ export const useGameStore = create<GameStore>((set, get) => {
           conflictScenario: "organic",
           playMode: true,
           logs: [
-            "Organic diplomacy enabled. Nations will negotiate, ally, break alliances and occasionally start wars on their own.",
+            "Organic diplomacy enabled. Wars now require rising tension, a diplomatic incident, mobilization, and failed diplomacy before combat begins.",
             ...state.logs
           ].slice(0, 120)
         };
       }
 
       const factions = state.factions.map((faction) => ({
-        ...faction,
-        relations: { ...faction.relations }
+        ...normalizeFactionCivilization(faction),
+        relations: { ...faction.relations },
+        diplomacy: { ...(faction.diplomacy ?? {}) }
       }));
       const active = factions
         .filter((faction) => !faction.controlledBy)
@@ -2065,150 +2066,233 @@ export const useGameStore = create<GameStore>((set, get) => {
 
       if (active.length < 2) return state;
 
-      const byId = new Map(factions.map((faction) => [faction.id, faction]));
-      const setPair = (aId: string, bId: string, relation: Relation) => {
-        const a = byId.get(aId);
-        const b = byId.get(bId);
-        if (!a || !b || aId === bId) return;
-        a.relations[bId] = relation;
-        b.relations[aId] = relation;
-      };
-
       const selected =
         active.find((faction) => faction.id === state.selectedFactionId) ??
         active[0];
 
-      let npcs = state.npcs;
-      const participants = new Set<string>();
-      const events: string[] = [];
+      const setAlliance = (
+        members: Faction[],
+        allianceName: string
+      ) => {
+        for (const member of members) {
+          member.allianceName = allianceName;
+          for (const ally of members) {
+            if (member.id === ally.id) continue;
+            member.relations[ally.id] = "allied";
+            ensureDiplomaticMemory(member, ally.id).trust = Math.max(
+              68,
+              ensureDiplomaticMemory(member, ally.id).trust
+            );
+          }
+        }
+      };
+
+      let attackerSide: Faction[] = [];
+      let defenderSide: Faction[] = [];
+      let attackerAllianceName: string | null = null;
+      let defenderAllianceName: string | null = null;
+      let primaryAttacker = selected;
+      let primaryDefender: Faction | undefined;
+      let incident: DiplomaticIncident;
 
       if (scenario === "regional-war") {
-        const rivals = nearestNations(selected, active, 10).filter(
-          (candidate) => selected.relations[candidate.id] !== "allied"
-        );
-        const rival = rivals[0] ?? active.find((item) => item.id !== selected.id);
-        if (!rival) return state;
+        primaryDefender =
+          nearestNations(selected, active, 12).find(
+            (candidate) => selected.relations[candidate.id] !== "allied"
+          ) ?? active.find((candidate) => candidate.id !== selected.id);
+        if (!primaryDefender) return state;
 
-        setPair(selected.id, rival.id, "war");
-        participants.add(selected.id);
-        participants.add(rival.id);
-
-        const selectedAllies = nearestNations(selected, active, 14)
+        const existingAttackAllies = nearestNations(selected, active, 18)
           .filter((candidate) => selected.relations[candidate.id] === "allied")
           .slice(0, 2);
-        const rivalAllies = nearestNations(rival, active, 14)
-          .filter((candidate) => rival.relations[candidate.id] === "allied")
+        const existingDefenseAllies = nearestNations(primaryDefender, active, 18)
+          .filter(
+            (candidate) =>
+              primaryDefender!.relations[candidate.id] === "allied" &&
+              candidate.id !== selected.id
+          )
           .slice(0, 2);
 
-        for (const ally of selectedAllies) {
-          setPair(ally.id, selected.id, "allied");
-          setPair(ally.id, rival.id, "war");
-          participants.add(ally.id);
+        attackerSide = [selected, ...existingAttackAllies];
+        const attackerIds = new Set(attackerSide.map((item) => item.id));
+        defenderSide = [primaryDefender, ...existingDefenseAllies].filter(
+          (item) => !attackerIds.has(item.id)
+        );
+
+        attackerAllianceName =
+          selected.allianceName ??
+          (attackerSide.length > 1
+            ? choose(state.catalog.allianceNames, "Regional Defense Pact", 0.31)
+            : null);
+        defenderAllianceName =
+          primaryDefender.allianceName ??
+          (defenderSide.length > 1
+            ? choose(state.catalog.allianceNames, "Regional Security Pact", 0.67)
+            : null);
+
+        if (attackerAllianceName && attackerSide.length > 1) {
+          setAlliance(attackerSide, attackerAllianceName);
         }
-        for (const ally of rivalAllies) {
-          setPair(ally.id, rival.id, "allied");
-          setPair(ally.id, selected.id, "war");
-          participants.add(ally.id);
+        if (defenderAllianceName && defenderSide.length > 1) {
+          setAlliance(defenderSide, defenderAllianceName);
         }
 
-        events.push(
-          `Regional war began between ${selected.name} and ${rival.name}. Existing nearby allies may be pulled in, but the rest of the world remains outside the conflict.`
+        incident = createIncident(
+          selected,
+          primaryDefender,
+          state.tick,
+          chooseIncidentType(selected, primaryDefender, state.tick)
         );
       } else {
-        const anchorA = active[0];
-        const anchorB =
+        primaryAttacker = active[0];
+        primaryDefender =
           active
             .slice(1)
-            .filter((candidate) => geographicDistance(anchorA, candidate) > 35)
+            .filter(
+              (candidate) => geographicDistance(primaryAttacker, candidate) > 30
+            )
             .sort(
               (a, b) =>
                 b.army + b.treasury * 0.08 - (a.army + a.treasury * 0.08)
             )[0] ?? active[1];
 
-        const chooseCoalition = (
+        const buildCoalition = (
           anchor: Faction,
-          opposingAnchor: Faction
+          opposing: Faction,
+          maximum: number
         ) => {
-          const existingAllies = nearestNations(anchor, active, 24)
-            .filter((candidate) => anchor.relations[candidate.id] === "allied")
-            .slice(0, 3);
-          const nearbyPartners = nearestNations(anchor, active, 12)
-            .filter(
-              (candidate) =>
-                candidate.id !== opposingAnchor.id &&
-                !existingAllies.some((ally) => ally.id === candidate.id)
-            )
-            .slice(0, 2);
-
-          return [anchor, ...existingAllies, ...nearbyPartners].filter(
-            (item, index, list) =>
-              list.findIndex((candidate) => candidate.id === item.id) === index
+          const treatyAllies = active.filter(
+            (candidate) =>
+              candidate.id !== anchor.id &&
+              candidate.id !== opposing.id &&
+              anchor.relations[candidate.id] === "allied"
           );
+          const nearbyPartners = nearestNations(anchor, active, 18).filter(
+            (candidate) =>
+              candidate.id !== opposing.id &&
+              !treatyAllies.some((ally) => ally.id === candidate.id)
+          );
+          return [anchor, ...treatyAllies, ...nearbyPartners]
+            .filter(
+              (item, index, list) =>
+                list.findIndex((candidate) => candidate.id === item.id) === index
+            )
+            .slice(0, maximum);
         };
 
-        const teamA = chooseCoalition(anchorA, anchorB);
-        const teamAIds = new Set(teamA.map((item) => item.id));
-        const teamB = chooseCoalition(anchorB, anchorA).filter(
-          (item) => !teamAIds.has(item.id)
+        attackerSide = buildCoalition(primaryAttacker, primaryDefender, 6);
+        const attackerIds = new Set(attackerSide.map((item) => item.id));
+        defenderSide = buildCoalition(primaryDefender, primaryAttacker, 6).filter(
+          (item) => !attackerIds.has(item.id)
         );
 
-        const allianceA = choose(
-          state.catalog.allianceNames,
-          "Northern Coalition",
-          0.27
-        );
-        const allianceB = choose(
-          state.catalog.allianceNames,
-          "Southern Coalition",
-          0.73
-        );
+        attackerAllianceName =
+          primaryAttacker.allianceName ??
+          choose(state.catalog.allianceNames, "Continental Coalition", 0.23);
+        defenderAllianceName =
+          primaryDefender.allianceName ??
+          choose(state.catalog.allianceNames, "Mutual Defense League", 0.79);
 
-        for (const member of teamA) {
-          member.allianceName = allianceA;
-          participants.add(member.id);
-          for (const ally of teamA) {
-            if (member.id !== ally.id) setPair(member.id, ally.id, "allied");
-          }
-        }
-        for (const member of teamB) {
-          member.allianceName = allianceB;
-          participants.add(member.id);
-          for (const ally of teamB) {
-            if (member.id !== ally.id) setPair(member.id, ally.id, "allied");
-          }
-        }
+        setAlliance(attackerSide, attackerAllianceName);
+        setAlliance(defenderSide, defenderAllianceName);
 
-        for (const member of teamA) {
-          const target = [...teamB].sort(
-            (a, b) =>
-              geographicDistance(member, a) - geographicDistance(member, b)
-          )[0];
-          if (target) setPair(member.id, target.id, "war");
-        }
-        for (const member of teamB) {
-          const target = [...teamA].sort(
-            (a, b) =>
-              geographicDistance(member, a) - geographicDistance(member, b)
-          )[0];
-          if (target) setPair(member.id, target.id, "war");
-        }
-
-        events.push(
-          `World War began around ${anchorA.name} and ${anchorB.name}: ${teamA.length} nations in ${allianceA} and ${teamB.length} in ${allianceB}. Other nations can remain neutral or enter later through diplomacy.`
+        incident = createIncident(
+          primaryAttacker,
+          primaryDefender,
+          state.tick,
+          chooseIncidentType(primaryAttacker, primaryDefender, state.tick, true)
         );
       }
 
-      for (const id of participants) {
-        const faction = byId.get(id);
-        if (faction) npcs = ensureSquad(npcs, faction, state.catalog, 10);
+      changePairDiplomacy(
+        primaryAttacker,
+        primaryDefender,
+        incident.tensionDelta,
+        -Math.round(incident.tensionDelta * 0.8),
+        state.tick,
+        true
+      );
+
+      const startsTick =
+        state.tick + (scenario === "world-war" ? 16 : 10);
+      const frontProgress: Record<string, number> = {};
+      for (const defender of defenderSide) {
+        frontProgress[`${primaryAttacker.id}->${defender.id}`] = 0;
       }
+
+      const war: ActiveWar = {
+        id: makeId("war"),
+        name: warNameFromIncident(
+          incident,
+          primaryAttacker,
+          primaryDefender,
+          scenario === "world-war"
+        ),
+        status: "mobilizing",
+        createdTick: state.tick,
+        startsTick,
+        causeIncidentId: incident.id,
+        primaryAttackerId: primaryAttacker.id,
+        primaryDefenderId: primaryDefender.id,
+        attackerIds: attackerSide.map((item) => item.id),
+        defenderIds: defenderSide.map((item) => item.id),
+        attackerAllianceName,
+        defenderAllianceName,
+        frontProgress,
+        summary: incident.description
+      };
+
+      const attackerTarget = primaryDefender.id;
+      const defenderTarget = primaryAttacker.id;
+      const garrisons = state.garrisons.map((garrison) => {
+        if (war.attackerIds.includes(garrison.factionId)) {
+          const target = factions.find((item) => item.id === attackerTarget);
+          return target
+            ? {
+                ...garrison,
+                order: "move" as const,
+                targetFactionId: target.id,
+                targetLat: target.lat,
+                targetLon: target.lon
+              }
+            : garrison;
+        }
+        if (war.defenderIds.includes(garrison.factionId)) {
+          const target = factions.find((item) => item.id === defenderTarget);
+          return target
+            ? {
+                ...garrison,
+                order: "move" as const,
+                targetFactionId: target.id,
+                targetLat: target.lat,
+                targetLon: target.lon
+              }
+            : garrison;
+        }
+        return garrison;
+      });
+
+      const sideA = attackerAllianceName
+        ? `${attackerAllianceName}: ${attackerSide.map((item) => item.name).join(", ")}`
+        : attackerSide.map((item) => item.name).join(", ");
+      const sideB = defenderAllianceName
+        ? `${defenderAllianceName}: ${defenderSide.map((item) => item.name).join(", ")}`
+        : defenderSide.map((item) => item.name).join(", ");
 
       return {
         factions,
-        npcs,
+        garrisons,
+        incidents: [...state.incidents, incident].slice(-160),
+        wars: [...state.wars, war].slice(-60),
         conflictScenario: scenario,
         playMode: true,
-        logs: [...events, ...state.logs].slice(0, 120)
+        logs: [
+          `CRISIS — ${incident.title}. ${incident.description}`,
+          `${war.name}: mobilization has started. Combat begins at tick ${startsTick} if diplomacy fails.`,
+          `Side A — ${sideA}`,
+          `Side B — ${sideB}`,
+          ...state.logs
+        ].slice(0, 160)
       };
     }),
 
