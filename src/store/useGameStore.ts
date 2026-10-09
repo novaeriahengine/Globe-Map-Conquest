@@ -1656,7 +1656,37 @@ export const useGameStore = create<GameStore>((set, get) => {
         true
       );
 
-      const startsTick = state.tick + 8;
+      const attackerIds = [
+        a.id,
+        ...factions
+          .filter(
+            (faction) =>
+              faction.id !== a.id &&
+              faction.id !== b.id &&
+              !faction.controlledBy &&
+              Boolean(a.allianceName) &&
+              faction.allianceName === a.allianceName
+          )
+          .slice(0, 3)
+          .map((faction) => faction.id)
+      ];
+      const attackerSet = new Set(attackerIds);
+      const defenderIds = [
+        b.id,
+        ...factions
+          .filter(
+            (faction) =>
+              faction.id !== b.id &&
+              !attackerSet.has(faction.id) &&
+              !faction.controlledBy &&
+              Boolean(b.allianceName) &&
+              faction.allianceName === b.allianceName
+          )
+          .slice(0, 3)
+          .map((faction) => faction.id)
+      ];
+
+      const startsTick = state.tick + 16;
       const war: ActiveWar = {
         id: makeId("war"),
         name: warNameFromIncident(incident, a, b),
@@ -1666,21 +1696,27 @@ export const useGameStore = create<GameStore>((set, get) => {
         causeIncidentId: incident.id,
         primaryAttackerId: a.id,
         primaryDefenderId: b.id,
-        attackerIds: [a.id],
-        defenderIds: [b.id],
+        attackerIds,
+        defenderIds,
         attackerAllianceName: a.allianceName ?? null,
-        defenderAllianceName: b.allianceName ?? null
+        defenderAllianceName: b.allianceName ?? null,
+        frontProgress: { [`${a.id}->${b.id}`]: 0 },
+        summary: incident.description
       };
 
       return {
         factions,
-        incidents: [...state.incidents, incident].slice(-120),
-        wars: [...state.wars, war].slice(-40),
+        incidents: [...state.incidents, incident].slice(-160),
+        wars: [...state.wars, war].slice(-60),
         playMode: true,
         logs: [
-          `CRISIS: ${incident.title}. ${a.name} and ${b.name} are mobilizing. If diplomacy fails, war begins at tick ${startsTick}.`,
+          `CRISIS: ${incident.title}. ${incident.description}`,
+          `${a.name} and ${b.name} are mobilizing. If diplomacy fails, war begins at tick ${startsTick}.`,
+          attackerIds.length > 1 || defenderIds.length > 1
+            ? "Alliance obligations may pull partner nations into the conflict when combat begins."
+            : "No formal alliance partners are currently committed to this crisis.",
           ...state.logs
-        ].slice(0, 120)
+        ].slice(0, 160)
       };
     });
   },
