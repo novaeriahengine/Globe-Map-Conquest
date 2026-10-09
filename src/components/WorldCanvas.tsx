@@ -190,6 +190,16 @@ function CountryRegion({
       return;
     }
 
+    if (tool === "nation") {
+      createNationAt(
+        xyzToLatLon(event.point.x, event.point.y, event.point.z),
+        nationPlacementSize,
+        nationPlacementName,
+        nationPlacementColor
+      );
+      return;
+    }
+
     selectFaction(faction.id);
   };
 
@@ -919,6 +929,10 @@ export function Map2D() {
   const selectFaction = useGameStore((state) => state.selectFaction);
   const selectTerritory = useGameStore((state) => state.selectTerritory);
   const addTerritoryPoint = useGameStore((state) => state.addTerritoryPoint);
+  const createNationAt = useGameStore((state) => state.createNationAt);
+  const nationPlacementSize = useGameStore((state) => state.nationPlacementSize);
+  const nationPlacementName = useGameStore((state) => state.nationPlacementName);
+  const nationPlacementColor = useGameStore((state) => state.nationPlacementColor);
 
   const features = useMemo(countryFeatures, []);
 
