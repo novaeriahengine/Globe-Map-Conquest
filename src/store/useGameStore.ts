@@ -12,6 +12,8 @@ import type {
   Era,
   Faction,
   FlagPresetId,
+  Garrison,
+  GarrisonBranch,
   LatLon,
   LegacySavedWorldV1,
   NameCatalog,
@@ -38,6 +40,7 @@ interface GameStore {
   worldMode: WorldMode;
   viewMode: ViewMode;
   supportedFactionId: string | null;
+  playerFactionId: string | null;
   workspaceMode: WorkspaceMode;
   era: Era;
   conflictScenario: ConflictScenario;
@@ -52,6 +55,7 @@ interface GameStore {
   territoryDraft: LatLon[];
   selectedTerritoryId: string | null;
   npcs: NpcUnit[];
+  garrisons: Garrison[];
   quests: Quest[];
   incidents: DiplomaticIncident[];
   wars: ActiveWar[];
@@ -66,6 +70,7 @@ interface GameStore {
   setWorldMode: (mode: WorldMode) => void;
   setViewMode: (mode: ViewMode) => void;
   setWorkspaceMode: (mode: WorkspaceMode) => void;
+  setPlayerFaction: (factionId: string | null) => void;
   setEra: (era: Era) => void;
   setConflictScenario: (scenario: ConflictScenario) => void;
   supportFaction: (factionId: string | null) => void;
@@ -107,6 +112,22 @@ interface GameStore {
   setFactionColor: (factionId: string, color: string) => void;
   setRelation: (aId: string, bId: string, relation: Relation) => void;
   provokeConflict: (aId: string, bId: string) => void;
+  createNationAt: (
+    point: LatLon,
+    size: number,
+    name?: string,
+    color?: string
+  ) => void;
+  createGarrison: (
+    factionId: string,
+    branch: GarrisonBranch,
+    size: number
+  ) => void;
+  orderGarrison: (
+    garrisonId: string,
+    order: "hold" | "move" | "attack" | "support",
+    targetFactionId?: string | null
+  ) => void;
   spawnKing: (factionId: string) => void;
   beginTerritoryDraw: () => void;
   addTerritoryPoint: (point: LatLon) => void;
